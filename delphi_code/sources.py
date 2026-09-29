@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 from typing import NamedTuple, Protocol
 
+from .hosts import HOSTS_BY_DOMAIN
 from .keys import is_explicit_path, normalize_remote, project_key
 from .model import Failure
 
@@ -56,12 +57,12 @@ class LocalSource:
         yield Checkout(self.path, self.path, {"kind": "local", "key": self.key})
 
 
-class BitbucketSource:
-    def __init__(self, workspace, slug):
-        self.key = f"bitbucket.org/{workspace}/{slug}"
-        self.web_url = f"https://bitbucket.org/{workspace}/{slug}"
-        clone_base = os.environ.get("DELPHI_CODE_BITBUCKET_GIT_BASE", "https://bitbucket.org").rstrip("/")
-        self.clone_url = f"{clone_base}/{workspace}/{slug}.git"
+class GitRemoteSource:
+    def __init__(self, host, owner, repository):
+        self.host = host
+        self.owner, self.repository = owner, repository
+        self.key = f"{host.domain}/{owner}/{repository}"
+        self.clone_url = host.clone_url(owner, repository)
 
     def latest_revision(self, ref):
         return self._named_revision(ref) if ref else self._default_branch_revision()
@@ -74,8 +75,8 @@ class BitbucketSource:
             self._git("clone", "--quiet", "--depth", "1", "--single-branch", "--no-tags", "--branch", revision.ref, self.clone_url, str(directory))
             commit = self._git("-C", str(directory), "rev-parse", "HEAD").strip()
             yield Checkout(directory, None, {
-                "kind": "bitbucket", "key": self.key, "url": self.web_url, "ref": revision.ref, "commit": commit,
-                "permalink": f"{self.web_url}/src/{commit}/{{path}}#lines-{{start}}:{{end}}",
+                "kind": self.host.name.lower(), "key": self.key, "url": self.host.web_url(self.owner, self.repository),
+                "ref": revision.ref, "commit": commit, "permalink": self.host.permalink_template(self.owner, self.repository, commit),
             })
 
     def _default_branch_revision(self):
@@ -98,19 +99,18 @@ class BitbucketSource:
         return [line.split("\t") for line in output.splitlines()]
 
     def _git(self, *args):
-        return run_git_with_bitbucket_credentials(args, self.key)
+        return run_git(args, self.key, self.host.clone_credentials(), self.host.credentials_hint)
 
 
-def run_git_with_bitbucket_credentials(args, key):
+def run_git(args, key, credentials, credentials_hint):
     environment = dict(os.environ, GIT_TERMINAL_PROMPT="0")
-    username, password = os.environ.get("BITBUCKET_USERNAME"), os.environ.get("BITBUCKET_APP_PASSWORD")
     override_credential_helpers = []
     with tempfile.TemporaryDirectory(prefix="delphi-code-git-") as scratch:
-        if username and password:
+        if credentials:
             askpass = Path(scratch) / "askpass"
             askpass.write_text(ASKPASS_SCRIPT)
             askpass.chmod(0o700)
-            environment.update(GIT_ASKPASS=str(askpass), DELPHI_CODE_GIT_USERNAME=username, DELPHI_CODE_GIT_PASSWORD=password)
+            environment.update(GIT_ASKPASS=str(askpass), DELPHI_CODE_GIT_USERNAME=credentials[0], DELPHI_CODE_GIT_PASSWORD=credentials[1])
             override_credential_helpers = ["-c", "credential.helper="]
         try:
             result = subprocess.run(["git", *override_credential_helpers, *args], capture_output=True, text=True,
@@ -123,7 +123,7 @@ def run_git_with_bitbucket_credentials(args, key):
         return result.stdout
     last_error_line = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else f"git exited with {result.returncode}"
     if any(failure in result.stderr for failure in AUTHENTICATION_FAILURES):
-        raise Failure("remote_auth_failed", f"Bitbucket refused access to {key}: {last_error_line}. Set BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD, or configure git credentials for bitbucket.org", 5)
+        raise Failure("remote_auth_failed", f"Access to {key} was refused: {last_error_line}. To fix it, {credentials_hint}", 5)
     raise Failure("remote_unavailable", f"git failed for {key}: {last_error_line}", 5)
 
 
@@ -133,8 +133,8 @@ def source_from_registry(text):
         return LocalSource(path.resolve())
     key = normalize_remote(text)
     host, *repository = key.split("/") if key else [None]
-    if host == "bitbucket.org" and len(repository) == 2:
-        return BitbucketSource(*repository)
+    if host in HOSTS_BY_DOMAIN and len(repository) == 2:
+        return GitRemoteSource(HOSTS_BY_DOMAIN[host](), *repository)
     return None
 
 
@@ -144,5 +144,5 @@ def source_from_argument(text):
         return LocalSource(path.resolve())
     source = source_from_registry(text)
     if source is None:
-        raise Failure("usage", f"{text} is neither a project directory nor a Bitbucket Cloud repository such as bitbucket.org/workspace/repository", 2)
+        raise Failure("usage", f"{text} is neither a project directory nor a repository such as bitbucket.org/workspace/repository or github.com/owner/repository", 2)
     return source

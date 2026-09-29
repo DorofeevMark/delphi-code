@@ -167,7 +167,7 @@ class OfflineCLI(unittest.TestCase):
     def test_remote_workflow(self):
         remote = self.base / "remote"
         env = dict(self.env, DELPHI_CODE_INDEX_ROOT=str(self.base / "remote-indexes"), DELPHI_CODE_REGISTRY=str(self.base / "remote.toml"),
-                   DELPHI_CODE_BITBUCKET_GIT_BASE=remote.as_uri())
+                   DELPHI_CODE_BITBUCKET_GIT_BASE=remote.as_uri(), DELPHI_CODE_GITHUB_GIT_BASE=remote.as_uri())
         invoke = lambda *args, code=0: self.invoke(*args, code=code, project=False, env=env)
         git = lambda *args: subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
         work = self.base / "remote-work"
@@ -194,7 +194,12 @@ class OfflineCLI(unittest.TestCase):
         self.assertNotEqual(synced["commit"], commit)
         self.assertEqual((synced["incremental"].get("num_unchanged"), synced["incremental"].get("num_adds", 0)), (1, 0))
         self.assertEqual(invoke("index", "-p", "acme/api", code=2)["code"], "usage")
-        self.assertIn("multiply", invoke("search", "multiply", "-p", "api", "--limit", "1")["results"][0]["text"])
+        self.assertIn("multiply", invoke("search", "multiply", "-p", "bitbucket.org/acme/api", "--limit", "1")["results"][0]["text"])
+        mirrored = invoke("add", "github.com/acme/api")["repos"][0]
+        self.assertEqual((mirrored["key"], mirrored["incremental"].get("num_adds")), ("github.com/acme/api", 2))
+        result = invoke("search", "multiply", "-p", "github.com/acme/api", "--limit", "1")["results"][0]
+        self.assertEqual(result["url"], f"https://github.com/acme/api/blob/{mirrored['commit']}/math.py#L1-L2")
+        self.assertEqual(invoke("search", "-p", "api", "multiply", code=2)["code"], "project_ambiguous")
 
 
 class NetworkSandbox(unittest.TestCase):

@@ -114,7 +114,7 @@ class RegistryCommands(unittest.TestCase):
         self.assertEqual(raised.exception.code, "project_missing")
 
     def test_invalid_registry(self):
-        for content in ("[[repo]]\nsource = 'relative/path'\n", "[[repo]]\nsource = 'github.com/acme/api'\n", "[[repo]]\npath = 1\n", "repo = 3\n", "[[repo]]\nsource = 'x'\nmax_bytes = 0\n", "[[repo]]\nsource = 'x'\nkey = 1\n", "not toml ["):
+        for content in ("[[repo]]\nsource = 'relative/path'\n", "[[repo]]\nsource = 'gitlab.com/acme/api'\n", "[[repo]]\npath = 1\n", "repo = 3\n", "[[repo]]\nsource = 'x'\nmax_bytes = 0\n", "[[repo]]\nsource = 'x'\nkey = 1\n", "not toml ["):
             self.registry.write_text(content)
             with self.assertRaises(Failure) as raised:
                 Registry().entries()

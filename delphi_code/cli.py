@@ -51,7 +51,7 @@ def arguments():
             command.add_argument("query")
             command.add_argument("--limit", type=int, default=10)
     add = commands.add_parser("add", help="Track projects in the registry and index them")
-    add.add_argument("sources", nargs="*", metavar="SOURCE", help="Project directory, or bitbucket.org/workspace/repository; omit to pick Bitbucket repositories interactively")
+    add.add_argument("sources", nargs="*", metavar="SOURCE", help="Project directory, bitbucket.org/workspace/repository, or github.com/owner/repository; omit to pick repositories interactively")
     add.add_argument("--ref", help="Branch or tag of remote repositories; defaults to the default branch")
     selection_options(add, True)
     model_option(add)

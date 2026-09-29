@@ -22,22 +22,27 @@ class TrackingChanges(NamedTuple):
 
 
 class RepositoryPicker:
-    def __init__(self, catalog=None, terminal=None):
+    def __init__(self, hosts=None, terminal=None):
         self._terminal = _stderr_terminal() if terminal is None else terminal
-        if catalog is None:
-            from .bitbucket_catalog import BitbucketCatalog
+        if hosts is None:
+            from .hosts import configured_hosts
 
-            catalog = BitbucketCatalog()
-        self._catalog = catalog
+            hosts = configured_hosts()
+        if not hosts:
+            raise Failure("remote_auth_missing", "Picking repositories needs Bitbucket or GitHub credentials: set BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD or GITHUB_TOKEN, sign in with gh auth login, or store git credentials for bitbucket.org or github.com", 3)
+        self._hosts = hosts
 
     def choose(self, tracked_keys):
-        workspace = self._choose_workspace()
-        if workspace is None:
+        host = self._choose_host()
+        if host is None:
             return None
-        repositories = self._catalog.repositories(workspace)
+        owner = self._choose_owner(host)
+        if owner is None:
+            return None
+        repositories = host.repositories(owner)
         if not repositories:
-            raise Failure("remote_empty", f"You have no repositories in the Bitbucket workspace {workspace}", 2)
-        chosen_keys = self._choose_repositories(workspace, repositories, tracked_keys)
+            raise Failure("remote_empty", f"You have no repositories in the {host.name} {host.owner_noun} {owner}", 2)
+        chosen_keys = self._choose_repositories(owner, repositories, tracked_keys)
         if chosen_keys is None:
             return None
         changes = TrackingChanges.from_selection(repositories, chosen_keys, tracked_keys)
@@ -45,26 +50,36 @@ class RepositoryPicker:
             return None
         return changes
 
-    def _choose_workspace(self):
+    def _choose_host(self):
         import questionary
 
-        workspaces = self._catalog.workspaces()
-        if not workspaces:
-            raise Failure("remote_empty", "Your Bitbucket account has no workspaces", 2)
-        if len(workspaces) == 1:
-            return workspaces[0].slug
+        if len(self._hosts) == 1:
+            return self._hosts[0]
         return questionary.select(
-            "Bitbucket workspace",
-            choices=[questionary.Choice(f"{workspace.name} ({workspace.slug})", workspace.slug) for workspace in workspaces],
+            "Hosting service",
+            choices=[questionary.Choice(host.name, host) for host in self._hosts], **self._terminal,
+        ).ask()
+
+    def _choose_owner(self, host):
+        import questionary
+
+        owners = host.owners()
+        if not owners:
+            raise Failure("remote_empty", f"Your {host.name} account has no repositories", 2)
+        if len(owners) == 1:
+            return owners[0].slug
+        return questionary.select(
+            f"{host.name} {host.owner_noun}",
+            choices=[questionary.Choice(_owner_title(owner), owner.slug) for owner in owners],
             use_search_filter=True, use_jk_keys=False, **self._terminal,
         ).ask()
 
-    def _choose_repositories(self, workspace, repositories, tracked_keys):
+    def _choose_repositories(self, owner, repositories, tracked_keys):
         import questionary
 
         chosen = questionary.checkbox(
-            f"Repositories to index in {workspace} (space toggles, type to filter)",
-            choices=[questionary.Choice(_title(repository), repository.key, checked=repository.key in tracked_keys) for repository in repositories],
+            f"Repositories to index in {owner} (space toggles, type to filter)",
+            choices=[questionary.Choice(_repository_title(repository), repository.key, checked=repository.key in tracked_keys) for repository in repositories],
             use_search_filter=True, use_jk_keys=False, **self._terminal,
         ).ask()
         return None if chosen is None else set(chosen)
@@ -76,7 +91,11 @@ class RepositoryPicker:
         return questionary.confirm(question, default=True, **self._terminal).ask()
 
 
-def _title(repository):
+def _owner_title(owner):
+    return owner.slug if owner.name == owner.slug else f"{owner.name} ({owner.slug})"
+
+
+def _repository_title(repository):
     description = repository.description.splitlines()[0] if repository.description else ""
     if len(description) > DESCRIPTION_WIDTH:
         description = description[:DESCRIPTION_WIDTH - 1] + "…"
@@ -85,7 +104,7 @@ def _title(repository):
 
 def _stderr_terminal():
     if not (sys.stdin.isatty() and sys.stderr.isatty()):
-        raise Failure("usage", "Pass SOURCE arguments, or run add in a terminal to pick Bitbucket repositories", 2)
+        raise Failure("usage", "Pass SOURCE arguments, or run add in a terminal to pick repositories", 2)
     from prompt_toolkit.input import create_input
     from prompt_toolkit.output import create_output
 

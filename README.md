@@ -117,39 +117,43 @@ source = "bitbucket.org/acme/billing"
 ref = "release"
 ```
 
-### Bitbucket Cloud repositories
+### Bitbucket Cloud and GitHub repositories
 
 Repositories you have not cloned can be tracked too:
 
 ```sh
 delphi-code add bitbucket.org/acme/billing
 delphi-code add git@bitbucket.org:acme/billing.git --ref release
+delphi-code add github.com/octo/tools
 ```
 
-- `sync` asks Bitbucket for the latest commit of the branch or tag, which is the default branch unless `--ref` names another. It skips the repository when the index already holds that commit with the same filters and model. Otherwise it makes a shallow clone into a temporary directory, indexes it, and deletes the clone. Unchanged files are not embedded again.
-- Search results from these repositories carry a `url`: a Bitbucket link to the indexed commit and line range. The response also includes `ref` and `commit`, and `project` is `null`.
+- `sync` asks the hosting service for the latest commit of the branch or tag, which is the default branch unless `--ref` names another. It skips the repository when the index already holds that commit with the same filters and model. Otherwise it makes a shallow clone into a temporary directory, indexes it, and deletes the clone. Unchanged files are not embedded again.
+- Search results from these repositories carry a `url`: a Bitbucket or GitHub link to the indexed commit and line range. The response also includes `ref` and `commit`, and `project` is `null`.
 - Use `sync`, not `index`, to update them.
 - Only `add` and `sync` touch the network. `index`, `search`, `status`, and `list` stay offline.
 
-**Picking repositories.** Run `add` without sources in a terminal to choose from the repositories your account can see:
+**Picking repositories.** Run `add` without sources in a terminal to choose from the repositories your accounts can see:
 
 ```sh
 delphi-code add
 ```
 
-Choose a workspace (skipped when you have only one), then check repositories in a list you can filter by typing. Repositories you already track start checked, so unchecking one stops tracking it and deletes its index. After you confirm, the new repositories are indexed. Filter options and `--ref` apply to the repositories you add. The prompts are drawn on stderr, and stdout still receives one JSON object with the added repositories under `repos` and the untracked ones under `removed`. Cancelling changes nothing and reports `"cancelled": true`. Without a terminal, `add` requires sources.
+Choose Bitbucket or GitHub (asked only when both have credentials), then a Bitbucket workspace or GitHub account (skipped when there is only one). Then check repositories in a list you can filter by typing. Repositories you already track start checked, so unchecking one stops tracking it and deletes its index. After you confirm, the new repositories are indexed. Filter options and `--ref` apply to the repositories you add. The prompts are drawn on stderr, and stdout still receives one JSON object with the added repositories under `repos` and the untracked ones under `removed`. Cancelling changes nothing and reports `"cancelled": true`. Without a terminal, `add` requires sources.
 
-**Credentials.**
+**Credentials.** Git never prompts. Credentials from the environment reach git through `GIT_ASKPASS`, never in URLs or arguments, and take precedence over configured git credentials. Listing repositories for the picker uses the services' REST APIs. The API requests run in a separate process, like the model download in `setup`, so the main process keeps its network guard.
 
-- Cloning: if `BITBUCKET_USERNAME` and `BITBUCKET_APP_PASSWORD` are set, git receives them through `GIT_ASKPASS`, never in URLs or arguments, and they take precedence over configured git credentials. Otherwise git uses its own credentials, such as a credential helper. Git never prompts.
-- Listing repositories for the picker uses the Bitbucket REST API with the same variables. Without them, it asks git for the credentials it has stored for bitbucket.org (`git credential fill`). The API requests run in a separate process, like the model download in `setup`, so the main process keeps its network guard.
-- Bitbucket has replaced app passwords with API tokens. An API token also works in `BITBUCKET_APP_PASSWORD`. Git over HTTPS takes the username that Bitbucket shows for it, and the REST API takes your Atlassian account email: set that in `BITBUCKET_EMAIL`, which the picker uses instead of `BITBUCKET_USERNAME`.
+| | Bitbucket Cloud | GitHub |
+|---|---|---|
+| Cloning | `BITBUCKET_USERNAME` and `BITBUCKET_APP_PASSWORD`, otherwise git's own credentials | `GITHUB_TOKEN` or `GH_TOKEN`, otherwise git's own credentials (`gh auth setup-git` configures them) |
+| Listing for the picker | The same variables (with `BITBUCKET_EMAIL` in place of the username when set), otherwise the credentials git has stored for bitbucket.org | `GITHUB_TOKEN` or `GH_TOKEN`, otherwise `gh auth token`, otherwise the token git has stored for github.com |
 
-`DELPHI_CODE_BITBUCKET_GIT_BASE` sends clones to another base URL, such as a mirror, instead of `https://bitbucket.org`, and `DELPHI_CODE_BITBUCKET_API_BASE` does the same for the API. Result links still point to bitbucket.org.
+Bitbucket has replaced app passwords with API tokens. An API token also works in `BITBUCKET_APP_PASSWORD`. Git over HTTPS takes the username that Bitbucket shows for it, and the REST API takes your Atlassian account email, which you set in `BITBUCKET_EMAIL`.
+
+`DELPHI_CODE_BITBUCKET_GIT_BASE` and `DELPHI_CODE_GITHUB_GIT_BASE` send clones to another base URL, such as a mirror, and `DELPHI_CODE_BITBUCKET_API_BASE` and `DELPHI_CODE_GITHUB_API_BASE` do the same for the APIs. Result links still point to bitbucket.org and github.com.
 
 ### Searching across projects
 
-Cross-project search returns a single globally ranked list, with the `key` and full `project` path on each result (`null` for Bitbucket repositories, whose results carry a `url` instead). The query is embedded once, `--limit` applies to the combined list, and path/language filters apply within every index. All indexes must be readable, complete, and built with the selected model: a busy, broken, or incompatible index produces an error rather than silently partial results. Use `-p` to narrow the search when needed.
+Cross-project search returns a single globally ranked list, with the `key` and full `project` path on each result (`null` for Bitbucket and GitHub repositories, whose results carry a `url` instead). The query is embedded once, `--limit` applies to the combined list, and path/language filters apply within every index. All indexes must be readable, complete, and built with the selected model: a busy, broken, or incompatible index produces an error rather than silently partial results. Use `-p` to narrow the search when needed.
 
 ## Output
 
@@ -261,7 +265,7 @@ A Python audit hook also rejects Internet socket operations and DNS lookups. Thi
   delphi-code index -p /path/to/project
 ```
 
-Delphi Code needs read access to source and model files, write access to its user index directory, threads, SQLite extensions, and CocoIndex's LMDB memory maps. It needs no network access, except for `setup` and for `add` and `sync` of Bitbucket repositories, which run `git` against Bitbucket; local projects never need it. Some stricter sandboxes deny CocoIndex's native storage initialization with `EPERM`; `doctor` probes for this and reports `sandbox_storage_denied`. The application never escalates its own permissions. `doctor` reports the Python guard only; it does not claim that an external OS sandbox is active.
+Delphi Code needs read access to source and model files, write access to its user index directory, threads, SQLite extensions, and CocoIndex's LMDB memory maps. It needs no network access, except for `setup` and for `add` and `sync` of Bitbucket or GitHub repositories; local projects never need it. Some stricter sandboxes deny CocoIndex's native storage initialization with `EPERM`; `doctor` probes for this and reports `sandbox_storage_denied`. The application never escalates its own permissions. `doctor` reports the Python guard only; it does not claim that an external OS sandbox is active.
 
 ## Development
 

@@ -10,7 +10,8 @@ from delphi_code.cli import arguments, execute
 from delphi_code.model import Failure
 from delphi_code.picker import TrackingChanges
 from delphi_code.registry import Registry
-from delphi_code.sources import BitbucketSource, LocalSource, source_from_registry, source_from_argument
+from delphi_code.hosts import Bitbucket, GitHub
+from delphi_code.sources import GitRemoteSource, LocalSource, source_from_registry, source_from_argument
 from delphi_code.store import Store
 
 
@@ -18,17 +19,18 @@ def git(*args, cwd=None):
     return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
-class LocalBitbucketWithApiRepository(unittest.TestCase):
+class LocalHostWithApiRepository(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.base = self.root / "remote"
         self.enterContext(patch.dict(os.environ, {
-            "DELPHI_CODE_BITBUCKET_GIT_BASE": self.base.as_uri(), "DELPHI_CODE_INDEX_ROOT": str(self.root / "indexes"),
+            "DELPHI_CODE_BITBUCKET_GIT_BASE": self.base.as_uri(), "DELPHI_CODE_GITHUB_GIT_BASE": self.base.as_uri(),
+            "DELPHI_CODE_INDEX_ROOT": str(self.root / "indexes"),
             "DELPHI_CODE_REGISTRY": str(self.root / "repos.toml"),
         }))
-        for name in ("BITBUCKET_USERNAME", "BITBUCKET_APP_PASSWORD"):
+        for name in ("BITBUCKET_USERNAME", "BITBUCKET_APP_PASSWORD", "GITHUB_TOKEN", "GH_TOKEN"):
             os.environ.pop(name, None)
         git("init", "-q", "--bare", "-b", "main", str(self.base / "acme/api.git"))
         self.work = self.root / "work"
@@ -51,10 +53,14 @@ class ParseSource(unittest.TestCase):
     def test_forms(self):
         for text in ("bitbucket.org/acme/api", "git@bitbucket.org:acme/api.git", "https://bitbucket.org/Acme/API"):
             source = source_from_registry(text)
-            self.assertIsInstance(source, BitbucketSource, text)
+            self.assertIsInstance(source.host, Bitbucket, text)
             self.assertEqual(source.key, "bitbucket.org/acme/api")
+        for text in ("github.com/acme/api", "git@github.com:Acme/API.git", "https://github.com/acme/api"):
+            source = source_from_registry(text)
+            self.assertIsInstance(source.host, GitHub, text)
+            self.assertEqual(source.key, "github.com/acme/api")
         self.assertIsInstance(source_from_registry("/src/api"), LocalSource)
-        for text in ("github.com/acme/api", "bitbucket.org/acme", "bitbucket.org/acme/api/extra", "relative/path"):
+        for text in ("gitlab.com/acme/api", "github.com/acme", "bitbucket.org/acme", "bitbucket.org/acme/api/extra", "relative/path"):
             self.assertIsNone(source_from_registry(text), text)
 
     def test_arguments_prefer_directories(self):
@@ -65,15 +71,15 @@ class ParseSource(unittest.TestCase):
             self.addCleanup(os.chdir, previous)
             self.assertIsInstance(source_from_argument("bitbucket.org/acme/api"), LocalSource)
             os.chdir(previous)
-        self.assertIsInstance(source_from_argument("bitbucket.org/acme/api"), BitbucketSource)
+        self.assertIsInstance(source_from_argument("bitbucket.org/acme/api"), GitRemoteSource)
         with self.assertRaises(Failure) as raised:
             source_from_argument("gitlab.com/acme/api")
         self.assertEqual(raised.exception.code, "usage")
 
 
-class Bitbucket(LocalBitbucketWithApiRepository):
+class RemoteGitCheckouts(LocalHostWithApiRepository):
     def test_latest_and_checkout(self):
-        source = BitbucketSource("acme", "api")
+        source = GitRemoteSource(Bitbucket(), "acme", "api")
         head = git("rev-parse", "HEAD", cwd=self.work)
         self.assertEqual(source.latest_revision(None), ("main", head))
         self.assertEqual(source.latest_revision("v1"), ("v1", head))
@@ -90,31 +96,42 @@ class Bitbucket(LocalBitbucketWithApiRepository):
 
     def test_missing_repository(self):
         with self.assertRaises(Failure) as raised:
-            BitbucketSource("acme", "missing").latest_revision(None)
+            GitRemoteSource(Bitbucket(), "acme", "missing").latest_revision(None)
         self.assertEqual(raised.exception.code, "remote_unavailable")
 
-    def test_credentials_reach_git_only_through_askpass(self):
+    def git_call_with_askpass_answers(self, source):
         calls = []
         real = subprocess.run
 
         def run(command, **options):
             askpass = options["env"].get("GIT_ASKPASS")
-            answers = [real([askpass, prompt], capture_output=True, text=True, env=options["env"]).stdout for prompt in ("Username for 'https://bitbucket.org': ", "Password for 'https://me@bitbucket.org': ")] if askpass else None
+            answers = [real([askpass, prompt], capture_output=True, text=True, env=options["env"]).stdout for prompt in ("Username for 'https://host': ", "Password for 'https://user@host': ")] if askpass else None
             calls.append((command, answers))
             return real(command, **options)
 
-        with patch.dict(os.environ, {"BITBUCKET_USERNAME": "me", "BITBUCKET_APP_PASSWORD": "s3cret"}), patch("delphi_code.sources.subprocess.run", side_effect=run):
-            BitbucketSource("acme", "api").latest_revision(None)
-        command, answers = calls[0]
+        with patch("delphi_code.sources.subprocess.run", side_effect=run):
+            source.latest_revision(None)
+        return calls[0]
+
+    def test_credentials_reach_git_only_through_askpass(self):
+        with patch.dict(os.environ, {"BITBUCKET_USERNAME": "me", "BITBUCKET_APP_PASSWORD": "s3cret"}):
+            command, answers = self.git_call_with_askpass_answers(GitRemoteSource(Bitbucket(), "acme", "api"))
         self.assertEqual(command[1:3], ["-c", "credential.helper="])
         self.assertNotIn("s3cret", " ".join(command))
         self.assertEqual(answers, ["me\n", "s3cret\n"])
-        with patch("delphi_code.sources.subprocess.run", side_effect=run):
-            BitbucketSource("acme", "api").latest_revision(None)
-        self.assertEqual((calls[1][0][1], calls[1][1]), ("ls-remote", None))
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "ghp_token"}):
+            self.assertEqual(self.git_call_with_askpass_answers(GitRemoteSource(GitHub(), "acme", "api"))[1], ["x-access-token\n", "ghp_token\n"])
+        command, answers = self.git_call_with_askpass_answers(GitRemoteSource(Bitbucket(), "acme", "api"))
+        self.assertEqual((command[1], answers), ("ls-remote", None))
+
+    def test_github_checkout_links_to_github(self):
+        head = git("rev-parse", "HEAD", cwd=self.work)
+        with GitRemoteSource(GitHub(), "acme", "api").checkout() as checkout:
+            self.assertEqual((checkout.provenance["kind"], checkout.provenance["key"]), ("github", "github.com/acme/api"))
+            self.assertEqual(checkout.provenance["permalink"], f"https://github.com/acme/api/blob/{head}/{{path}}#L{{start}}-L{{end}}")
 
 
-class RemoteSync(LocalBitbucketWithApiRepository):
+class RemoteSync(LocalHostWithApiRepository):
     def setUp(self):
         super().setUp()
         self.enterContext(patch("delphi_code.cli.check_runtime", return_value=(self.root / "model", "same-model")))

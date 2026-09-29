@@ -80,7 +80,7 @@ class Registry:
         tables = data.get("repo", [])
         entries = [Entry.from_toml(table) for table in tables] if isinstance(tables, list) else [None]
         if set(data) - {"repo"} or None in entries:
-            raise Failure("registry_invalid", f"{self.path}: expected [[repo]] tables with a source (an absolute path or bitbucket.org/workspace/repository), optional key and ref strings, optional string lists paths, languages and ignores, and a positive integer max_bytes", 2)
+            raise Failure("registry_invalid", f"{self.path}: expected [[repo]] tables with a source (an absolute path, bitbucket.org/workspace/repository, or github.com/owner/repository), optional key and ref strings, optional string lists paths, languages and ignores, and a positive integer max_bytes", 2)
         return entries
 
     @contextmanager
