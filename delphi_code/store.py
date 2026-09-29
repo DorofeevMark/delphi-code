@@ -1,4 +1,3 @@
-"""Stored indexes: one directory per project key, with a manifest, a lock, and the vector table."""
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 import fcntl
@@ -9,14 +8,15 @@ import shutil
 import sqlite3
 from typing import NamedTuple
 
-from .keys import explicit_path, key_for, local_key, select
+from .keys import is_explicit_path, local_key, match_key, project_key
 from .model import Failure
 from .paths import index_root
 
 SCHEMA_VERSION = 2
+LEGACY_SCHEMA_VERSION = 1
 
 
-def read_json(path):
+def read_json_object(path):
     try:
         info = json.loads(path.read_text())
     except (OSError, ValueError):
@@ -29,6 +29,12 @@ def recorded_project(info):
     return Path(project) if isinstance(project, str) and Path(project).is_absolute() else None
 
 
+def recorded_key(info):
+    source = info.get("source")
+    key = source.get("key") if isinstance(source, dict) else None
+    return key if isinstance(key, str) and key else None
+
+
 @dataclass(frozen=True)
 class Index:
     directory: Path
@@ -37,14 +43,10 @@ class Index:
     info: dict = field(default_factory=dict, compare=False, repr=False)
 
     @classmethod
-    def load(cls, directory):
-        """The index in directory, or None when its manifest has no valid key."""
-        info = read_json(directory / "manifest.json")
-        source = info.get("source") if info else None
-        key = source.get("key") if isinstance(source, dict) else None
-        if not isinstance(key, str) or not key:
-            return None
-        return cls(directory, key, recorded_project(info), info)
+    def load_if_keyed(cls, directory):
+        info = read_json_object(directory / "manifest.json")
+        key = recorded_key(info) if info else None
+        return cls(directory, key, recorded_project(info), info) if key else None
 
     @contextmanager
     def lock(self, exclusive):
@@ -62,18 +64,17 @@ class Index:
         except FileNotFoundError as exc:
             raise Failure("index_missing", "No index exists; run index first", 4) from exc
 
-    def manifest(self):
-        """The current manifest, checked for a supported schema; call with the lock held."""
+    def read_manifest(self):
         if not (self.directory / "manifest.json").is_file():
             raise Failure("index_missing", "No completed index exists; run index first", 4)
-        result = json.loads((self.directory / "manifest.json").read_text())
-        if result.get("schema_version") != SCHEMA_VERSION:
+        manifest = json.loads((self.directory / "manifest.json").read_text())
+        if manifest.get("schema_version") != SCHEMA_VERSION:
             raise Failure("index_incompatible", "Unsupported index version", 4)
-        return result
+        return manifest
 
-    def write(self, info):
+    def write_manifest(self, manifest):
         temporary = self.directory / "manifest.tmp"
-        temporary.write_text(json.dumps(info, sort_keys=True) + "\n")
+        temporary.write_text(json.dumps(manifest, sort_keys=True) + "\n")
         temporary.replace(self.directory / "manifest.json")
 
     @contextmanager
@@ -95,91 +96,85 @@ class Index:
             return dict(db.execute("SELECT count(*) AS chunks, count(DISTINCT path) AS files FROM passages").fetchone())
 
 
-class Target(NamedTuple):
-    """What a --project value names: a project directory, its key, and its index if one exists."""
+class ResolvedProject(NamedTuple):
     project: Path | None
     key: str
     index: Index | None
 
 
 class Store:
-    """All indexes under one root. Indexes from schema version 1 are migrated on first sight."""
-
     def __init__(self, root=None):
         self.root = Path(root) if root else index_root()
 
     def all(self):
-        indexes, legacy = self._scan()
-        if not legacy:
+        indexes, legacy_directories = self._read_directories()
+        if not legacy_directories:
             return indexes
-        with self._exclusive():
-            return self._migrate(*self._scan())
+        with self._exclusively():
+            return self._assign_keys_to_legacy_indexes(*self._read_directories())
 
     def get(self, key):
         return next((index for index in self.all() if index.key == key), None)
 
-    def create(self, key, project):
-        """The index for key, created with a placeholder manifest if none exists."""
-        with self._exclusive():
-            existing = next((index for index in self._migrate(*self._scan()) if index.key == key), None)
+    def get_or_create(self, key, project):
+        with self._exclusively():
+            indexes = self._assign_keys_to_legacy_indexes(*self._read_directories())
+            existing = next((index for index in indexes if index.key == key), None)
             if existing:
                 return existing
             index = Index(self.root / secrets.token_hex(32), key, project)
             index.directory.mkdir(parents=True)
-            index.write({"schema_version": SCHEMA_VERSION, "project": str(project), "source": {"key": key}, "ready": False})
+            index.write_manifest({"schema_version": SCHEMA_VERSION, "project": str(project) if project else None,
+                                  "source": {"key": key}, "ready": False})
             return index
 
     def delete(self, index):
         with index.lock(True):
             shutil.rmtree(index.directory)
 
-    def resolve(self, value):
-        raw = str(value)
-        if not explicit_path(raw):
+    def resolve(self, name):
+        name = str(name)
+        if not is_explicit_path(name):
             indexes = self.all()
-            key = select(raw, [(index.key, index.project) for index in indexes])
+            key = match_key(name, [(index.key, index.project) for index in indexes])
             if key:
                 index = next(index for index in indexes if index.key == key)
-                return Target(index.project, key, index)
-        project = Path(raw).expanduser().resolve()
-        key = key_for(project)
-        return Target(project, key, self.get(key))
+                return ResolvedProject(index.project, key, index)
+        project = Path(name).expanduser().resolve()
+        key = project_key(project)
+        return ResolvedProject(project, key, self.get(key))
 
     @contextmanager
-    def _exclusive(self):
+    def _exclusively(self):
         self.root.mkdir(parents=True, exist_ok=True)
         with (self.root / ".store.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             yield
 
-    def _scan(self):
-        indexes, legacy = [], []
+    def _read_directories(self):
+        indexes, legacy_directories = [], []
         for manifest in sorted(self.root.glob("*/manifest.json")):
-            if index := Index.load(manifest.parent):
+            if index := Index.load_if_keyed(manifest.parent):
                 indexes.append(index)
-            elif (info := read_json(manifest)) and info.get("schema_version") == 1 and recorded_project(info):
-                legacy.append(manifest.parent)
-        return indexes, legacy
+            elif (info := read_json_object(manifest)) and info.get("schema_version") == LEGACY_SCHEMA_VERSION and recorded_project(info):
+                legacy_directories.append(manifest.parent)
+        return indexes, legacy_directories
 
-    def _migrate(self, indexes, legacy):
-        """Gives legacy path-hash indexes a key in place; call with the store lock held.
-
-        A busy legacy index is skipped and migrated later. A remote key already taken by another
-        index falls back to the path key, so two indexes never share a key.
-        """
-        taken = {index.key for index in indexes}
-        for directory in legacy:
+    def _assign_keys_to_legacy_indexes(self, indexes, legacy_directories):
+        taken_keys = {index.key for index in indexes}
+        for directory in legacy_directories:
             with (directory / "lock").open("a") as lock:
                 try:
                     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     continue
-                info = read_json(directory / "manifest.json")
+                info = read_json_object(directory / "manifest.json")
                 project = recorded_project(info)
-                key = key_for(project)
-                info.update(schema_version=SCHEMA_VERSION, source={"key": local_key(project) if key in taken else key})
-                index = Index(directory, info["source"]["key"], project, info)
-                index.write(info)
-            taken.add(index.key)
+                key = project_key(project)
+                unique_key = key if key not in taken_keys else local_key(project)
+                info.update(schema_version=SCHEMA_VERSION, source={"key": unique_key})
+                index = Index(directory, unique_key, project, info)
+                index.write_manifest(info)
+            taken_keys.add(unique_key)
             indexes.append(index)
         return sorted(indexes, key=lambda index: index.directory)

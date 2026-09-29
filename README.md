@@ -111,11 +111,33 @@ The list lives in `repos.toml` in the storage directory (`DELPHI_CODE_REGISTRY` 
 source = "/Users/me/src/api"
 key = "bitbucket.org/acme/api"
 paths = ["src/*"]
+
+[[repo]]
+source = "bitbucket.org/acme/billing"
+ref = "release"
 ```
+
+### Bitbucket Cloud repositories
+
+Repositories you have not cloned can be tracked too:
+
+```sh
+delphi-code add bitbucket.org/acme/billing
+delphi-code add git@bitbucket.org:acme/billing.git --ref release
+```
+
+- `sync` asks Bitbucket for the latest commit of the branch or tag, which is the default branch unless `--ref` names another. It skips the repository when the index already holds that commit with the same filters and model. Otherwise it makes a shallow clone into a temporary directory, indexes it, and deletes the clone. Unchanged files are not embedded again.
+- Search results from these repositories carry a `url`: a Bitbucket link to the indexed commit and line range. The response also includes `ref` and `commit`, and `project` is `null`.
+- Use `sync`, not `index`, to update them.
+- Only `add` and `sync` touch the network, through `git` subprocesses. `index`, `search`, `status`, and `list` stay offline.
+
+**Credentials.** If `BITBUCKET_USERNAME` and `BITBUCKET_APP_PASSWORD` are set, git receives them through `GIT_ASKPASS`, never in URLs or arguments, and they take precedence over configured git credentials. Otherwise git uses its own credentials, such as a credential helper. Git never prompts. Bitbucket has replaced app passwords with API tokens; an API token also works in `BITBUCKET_APP_PASSWORD`, with the username that Bitbucket shows for git over HTTPS.
+
+`DELPHI_CODE_BITBUCKET_GIT_BASE` sends clones to another base URL, such as a mirror, instead of `https://bitbucket.org`. Result links still point to bitbucket.org.
 
 ### Searching across projects
 
-Cross-project search returns a single globally ranked list, with the full `project` path on each result. The query is embedded once, `--limit` applies to the combined list, and path/language filters apply within every index. All indexes must be readable, complete, and built with the selected model: a busy, broken, or incompatible index produces an error rather than silently partial results. Use `-p` to narrow the search when needed.
+Cross-project search returns a single globally ranked list, with the `key` and full `project` path on each result (`null` for Bitbucket repositories, whose results carry a `url` instead). The query is embedded once, `--limit` applies to the combined list, and path/language filters apply within every index. All indexes must be readable, complete, and built with the selected model: a busy, broken, or incompatible index produces an error rather than silently partial results. Use `-p` to narrow the search when needed.
 
 ## Output
 
@@ -227,7 +249,7 @@ A Python audit hook also rejects Internet socket operations and DNS lookups. Thi
   delphi-code index -p /path/to/project
 ```
 
-Delphi Code needs read access to source and model files, write access to its user index directory, threads, SQLite extensions, and CocoIndex's LMDB memory maps. It needs no network access. Some stricter sandboxes deny CocoIndex's native storage initialization with `EPERM`; `doctor` probes for this and reports `sandbox_storage_denied`. The application never escalates its own permissions. `doctor` reports the Python guard only; it does not claim that an external OS sandbox is active.
+Delphi Code needs read access to source and model files, write access to its user index directory, threads, SQLite extensions, and CocoIndex's LMDB memory maps. It needs no network access, except for `setup` and for `add` and `sync` of Bitbucket repositories, which run `git` against Bitbucket; local projects never need it. Some stricter sandboxes deny CocoIndex's native storage initialization with `EPERM`; `doctor` probes for this and reports `sandbox_storage_denied`. The application never escalates its own permissions. `doctor` reports the Python guard only; it does not claim that an external OS sandbox is active.
 
 ## Development
 

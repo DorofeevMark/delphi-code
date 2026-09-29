@@ -17,7 +17,7 @@ class ProjectNames(unittest.TestCase):
     def register(self, relative, key=None):
         project = self.root / relative
         project.mkdir(parents=True)
-        return project, self.store.create(key or local_key(project), project)
+        return project, self.store.get_or_create(key or local_key(project), project)
 
     def resolve(self, value):
         project, key, index = self.store.resolve(value)

@@ -9,7 +9,7 @@ from unittest.mock import patch
 from delphi_code.cli import arguments, execute
 from delphi_code.model import Failure
 from delphi_code.keys import local_key
-from delphi_code.registry import Entry, Options, Registry
+from delphi_code.registry import Entry, FileSelection, Registry
 from delphi_code.store import Store
 
 
@@ -23,10 +23,11 @@ class RegistryCommands(unittest.TestCase):
         self.enterContext(patch("delphi_code.cli.check_runtime", return_value=(self.root / "model", "same-model")))
         self.indexed = []
 
-        def index_project(store, project, key, options, model_path, identity, load):
-            self.indexed.append((project, key, options))
-            index = store.create(key, project)
-            return {"project": str(project), "key": key, "index_directory": str(index.directory)}
+        def index_project(store, checkout, options, model_path, identity, load):
+            key = checkout.provenance["key"]
+            self.indexed.append((checkout.project, key, options))
+            index = store.get_or_create(key, checkout.project)
+            return {"project": str(checkout.project), "key": key, "index_directory": str(index.directory)}
 
         self.enterContext(patch("delphi_code.cli.index_project", side_effect=index_project))
 
@@ -50,7 +51,7 @@ class RegistryCommands(unittest.TestCase):
         self.assertTrue(all(repo["ok"] for repo in data["repos"]))
         stored = tomllib.loads(self.registry.read_text())["repo"]
         self.assertEqual(stored[0], {"source": str(one), "key": local_key(one), "paths": ["src/*"], "max_bytes": 2048})
-        self.assertEqual(self.indexed[0][2], Options(["src/*"], [], [], 2048))
+        self.assertEqual(self.indexed[0][2], FileSelection(["src/*"], [], [], 2048))
 
     def test_add_replaces_existing_entry(self):
         one = self.project("one")
@@ -67,7 +68,7 @@ class RegistryCommands(unittest.TestCase):
 
     def test_sync_reports_each_failure_and_keeps_going(self):
         one = self.project("one")
-        self.save(Entry(str(self.root / "gone")), Entry(str(one)), Entry("relative/path"))
+        self.save(Entry(str(self.root / "gone")), Entry(str(one)), Entry(str(self.root / "gone-too")))
         with self.assertRaises(Failure) as raised:
             self.run_command("sync")
         self.assertEqual(raised.exception.code, "sync_failed")
@@ -90,7 +91,7 @@ class RegistryCommands(unittest.TestCase):
     def test_list_combines_registry_and_untracked_indexes(self):
         one, two = self.project("one"), self.project("two")
         self.run_command("add", str(one), "--no-sync")
-        Store().create(local_key(two), two)
+        Store().get_or_create(local_key(two), two)
         rows = {row["key"]: row for row in self.run_command("list")["repos"]}
         self.assertEqual(rows[local_key(one)]["tracked"], True)
         self.assertIsNone(rows[local_key(one)]["index_directory"])
@@ -113,7 +114,7 @@ class RegistryCommands(unittest.TestCase):
         self.assertEqual(raised.exception.code, "project_missing")
 
     def test_invalid_registry(self):
-        for content in ("[[repo]]\npath = 1\n", "repo = 3\n", "[[repo]]\nsource = 'x'\nmax_bytes = 0\n", "[[repo]]\nsource = 'x'\nkey = 1\n", "not toml ["):
+        for content in ("[[repo]]\nsource = 'relative/path'\n", "[[repo]]\nsource = 'github.com/acme/api'\n", "[[repo]]\npath = 1\n", "repo = 3\n", "[[repo]]\nsource = 'x'\nmax_bytes = 0\n", "[[repo]]\nsource = 'x'\nkey = 1\n", "not toml ["):
             self.registry.write_text(content)
             with self.assertRaises(Failure) as raised:
                 Registry().entries()
@@ -127,7 +128,7 @@ class RegistryFile(unittest.TestCase):
         self.registry = Registry(Path(temporary.name) / "repos.toml")
 
     def test_round_trip_leaves_out_defaults(self):
-        entries = [Entry("/src/api", "bitbucket.org/acme/api", Options(paths=["src/*"])), Entry("~/web", options=Options(max_bytes=10))]
+        entries = [Entry("/src/api", "bitbucket.org/acme/api", FileSelection(paths=["src/*"])), Entry("~/web", selection=FileSelection(max_bytes=10))]
         with self.registry.edit() as current:
             current.extend(entries)
         self.assertEqual(self.registry.entries(), entries)
@@ -137,6 +138,6 @@ class RegistryFile(unittest.TestCase):
     def test_unchanged_edit_keeps_file(self):
         self.registry.path.write_text("# hand-written comment\n[[repo]]\nsource = '/src/api'\n")
         with self.registry.edit() as current:
-            current[0].options.paths.append("src/*")
-            current[0].options.paths.pop()
+            current[0].selection.paths.append("src/*")
+            current[0].selection.paths.pop()
         self.assertIn("hand-written comment", self.registry.path.read_text())

@@ -164,6 +164,38 @@ class OfflineCLI(unittest.TestCase):
         self.assertEqual(removed["deleted_index"], added[0]["index_directory"])
         self.assertFalse(Path(added[0]["index_directory"]).exists())
 
+    def test_remote_workflow(self):
+        remote = self.base / "remote"
+        env = dict(self.env, DELPHI_CODE_INDEX_ROOT=str(self.base / "remote-indexes"), DELPHI_CODE_REGISTRY=str(self.base / "remote.toml"),
+                   DELPHI_CODE_BITBUCKET_GIT_BASE=remote.as_uri())
+        invoke = lambda *args, code=0: self.invoke(*args, code=code, project=False, env=env)
+        git = lambda *args: subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
+        work = self.base / "remote-work"
+        git("init", "-q", "--bare", "-b", "main", str(remote / "acme/api.git"))
+        git("clone", "-q", str(remote / "acme/api.git"), str(work))
+        git("-C", str(work), "symbolic-ref", "HEAD", "refs/heads/main")
+        (work / "auth.py").write_text("def authenticate_user(password, expected_password):\n    return password == expected_password\n")
+        (work / "math.py").write_text("def add_numbers(left, right):\n    return left + right\n")
+        git("-C", str(work), "add", ".")
+        git("-C", str(work), "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "first")
+        git("-C", str(work), "push", "-q", "origin", "main")
+        added = invoke("add", "bitbucket.org/acme/api")["repos"][0]
+        self.assertEqual((added["key"], added["project"], added["ref"], added["files"]), ("bitbucket.org/acme/api", None, "main", 2))
+        commit = added["commit"]
+        result = invoke("search", "verify user password", "--limit", "1")["results"][0]
+        self.assertEqual((result["key"], result["path"], result["project"]), ("bitbucket.org/acme/api", "auth.py", None))
+        self.assertEqual(result["url"], f"https://bitbucket.org/acme/api/src/{commit}/auth.py#lines-1:2")
+        self.assertTrue(invoke("sync")["repos"][0]["unchanged"])
+        (work / "math.py").write_text("def multiply_numbers(left, right):\n    return left * right\n")
+        git("-C", str(work), "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-am", "second")
+        git("-C", str(work), "push", "-q", "origin", "main")
+        synced = invoke("sync")["repos"][0]
+        self.assertFalse(synced["unchanged"])
+        self.assertNotEqual(synced["commit"], commit)
+        self.assertEqual((synced["incremental"].get("num_unchanged"), synced["incremental"].get("num_adds", 0)), (1, 0))
+        self.assertEqual(invoke("index", "-p", "acme/api", code=2)["code"], "usage")
+        self.assertIn("multiply", invoke("search", "multiply", "-p", "api", "--limit", "1")["results"][0]["text"])
+
 
 class NetworkSandbox(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("DELPHI_CODE_OS_SANDBOX") == "1", "Run via scripts/test_offline.sh")

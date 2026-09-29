@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from delphi_code.keys import canonical, project_key
+from delphi_code.keys import normalize_remote, project_key
 from delphi_code.paths import data_directory, index_root
 from delphi_code.store import Store
 
@@ -21,11 +21,11 @@ class Canonical(unittest.TestCase):
             "git@bitbucket.org:Acme/API.git", "https://user@bitbucket.org/acme/api.git", "ssh://git@bitbucket.org:22/acme/api",
             "https://bitbucket.org/acme/api/", "bitbucket.org/acme/api",
         ):
-            self.assertEqual(canonical(remote), "bitbucket.org/acme/api", remote)
+            self.assertEqual(normalize_remote(remote), "bitbucket.org/acme/api", remote)
 
     def test_local_remotes_have_no_key(self):
         for remote in ("/srv/git/api.git", "../api", "file:///srv/git/api.git", "api", ""):
-            self.assertIsNone(canonical(remote), remote)
+            self.assertIsNone(normalize_remote(remote), remote)
 
 
 class Identity(unittest.TestCase):
@@ -51,9 +51,9 @@ class Identity(unittest.TestCase):
         self.assertEqual(project_key(project / "sub"), f"local:{project / 'sub'}")
 
     def test_create_is_stable_and_separates_keys(self):
-        first = self.store.create("bitbucket.org/acme/api", self.root / "one")
-        self.assertEqual(self.store.create("bitbucket.org/acme/api", self.root / "two").directory, first.directory)
-        second = self.store.create("local:/elsewhere/api", Path("/elsewhere/api"))
+        first = self.store.get_or_create("bitbucket.org/acme/api", self.root / "one")
+        self.assertEqual(self.store.get_or_create("bitbucket.org/acme/api", self.root / "two").directory, first.directory)
+        second = self.store.get_or_create("local:/elsewhere/api", Path("/elsewhere/api"))
         self.assertNotEqual(first.directory, second.directory)
         self.assertEqual(self.store.get("bitbucket.org/acme/api").directory, first.directory)
         self.assertIsNone(self.store.get("bitbucket.org/acme/other"))

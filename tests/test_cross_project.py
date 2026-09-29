@@ -29,7 +29,7 @@ class CrossProjectSearch(unittest.TestCase):
     def register(self, name, rows, **updates):
         project = self.root / name
         project.mkdir()
-        state = Store().create(local_key(project), project).directory
+        state = Store().get_or_create(local_key(project), project).directory
         (state / "lock").touch()
         info = dict(schema_version=2, project=str(project), source={"key": local_key(project)}, ready=True, model_sha256="same-model")
         info.update(updates)

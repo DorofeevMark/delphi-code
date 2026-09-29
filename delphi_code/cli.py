@@ -9,12 +9,14 @@ import shlex
 import sqlite3
 import sys
 import tempfile
+from urllib.parse import quote
 from datetime import datetime, timezone
 
 from .model import Failure, embed, inspect_model, load_model
-from .keys import project_key, select
+from .keys import match_key
 from .paths import model_directory
-from .registry import DEFAULT_MAX_BYTES, Entry, Options, Registry
+from .registry import DEFAULT_MAX_BYTES, Entry, FileSelection, Registry
+from .sources import Checkout, LocalSource, source_from_argument
 from .store import SCHEMA_VERSION, Store
 
 
@@ -49,7 +51,8 @@ def arguments():
             command.add_argument("query")
             command.add_argument("--limit", type=int, default=10)
     add = commands.add_parser("add", help="Track projects in the registry and index them")
-    add.add_argument("sources", nargs="+", metavar="SOURCE", help="Project directory")
+    add.add_argument("sources", nargs="+", metavar="SOURCE", help="Project directory, or bitbucket.org/workspace/repository")
+    add.add_argument("--ref", help="Branch or tag of remote repositories; defaults to the default branch")
     selection_options(add, True)
     model_option(add)
     add.add_argument("--no-sync", action="store_true", help="Only update the registry")
@@ -79,26 +82,38 @@ def as_failure(exc):
     return Failure("dependency_missing" if missing else "runtime_error", str(exc), 3 if missing else 5)
 
 
-def index_project(store, project, key, options, model_path, identity, load):
+def index_project(store, checkout, selection, model_path, identity, load):
     from .files import collect
     from .indexing import run
 
-    index = store.create(key, project)
+    key = checkout.provenance["key"]
+    index = store.get_or_create(key, checkout.project)
     with index.lock(True):
-        if index.manifest().get("model_sha256") not in (None, identity):
+        if index.read_manifest().get("model_sha256") not in (None, identity):
             raise Failure("model_mismatch", f"Model assets differ from the index; restore the original model or move {index.directory} aside and reindex", 4)
         model = load()
-        sources, skipped = collect(project, options.paths, options.languages, options.ignores, model_path, options.max_bytes)
+        sources, skipped = collect(checkout.directory, selection.paths, selection.languages, selection.ignores, model_path, selection.max_bytes)
         info = {
-            "schema_version": SCHEMA_VERSION, "project": str(project), "source": {"key": key}, "ready": False,
-            "model": str(model_path), "model_sha256": identity, **vars(options),
+            "schema_version": SCHEMA_VERSION, "project": str(checkout.project) if checkout.project else None, "source": checkout.provenance,
+            "ready": False, "model": str(model_path), "model_sha256": identity, **vars(selection),
         }
-        index.write(info)
+        index.write_manifest(info)
         stats = asyncio.run(run(index.directory, sources, model, identity))
         info.update(ready=True, indexed_at=datetime.now(timezone.utc).isoformat())
         total = index.counts()
-        index.write(info)
-    return {"project": str(project), "key": key, "index_directory": str(index.directory), **total, "skipped": skipped, "incremental": stats}
+        index.write_manifest(info)
+    return {"project": info["project"], "key": key, "index_directory": str(index.directory), **revision_fields(info),
+            **total, "skipped": skipped, "incremental": stats}
+
+
+def revision_fields(info):
+    source = info.get("source") or {}
+    return {name: source[name] for name in ("ref", "commit") if name in source}
+
+
+def index_holds_commit(info, commit, selection, identity):
+    return (info.get("ready") is True and (info.get("source") or {}).get("commit") == commit
+            and info.get("model_sha256") == identity and all(info.get(name) == value for name, value in vars(selection).items()))
 
 
 def loader(model_path):
@@ -124,6 +139,8 @@ def execute(args):
     if args.command == "search" and args.project is None:
         return search_all(args, store)
     project, key, index = store.resolve(args.project)
+    if args.command == "index" and index and index.project is None:
+        raise Failure("usage", f"{key} is a remote repository; update it with delphi-code sync", 2)
     exists = project is not None and project.is_dir()
     if not exists and (index is None or args.command == "index"):
         raise Failure("project_missing", f"Project directory does not exist: {project}", 2)
@@ -131,7 +148,7 @@ def execute(args):
         raise Failure("index_missing", f"No index exists; run delphi-code index -p {shlex.quote(str(project))}", 4)
     if args.command == "status":
         with index.lock(False):
-            info = index.manifest()
+            info = index.read_manifest()
             return {"key": key, "index_directory": str(index.directory), **info, **(index.counts() if info["ready"] else {})}
     if args.command == "index" and args.max_bytes < 1:
         raise Failure("usage", "--max-bytes must be positive", 2)
@@ -155,29 +172,30 @@ def execute(args):
         finally:
             db.close()
         return {
-            "project": str(project), "key": key, "index_directory": str(index.directory) if index else None, "model": str(model_path), "model_sha256": identity,
+            "project": str(project) if project else None, "key": key, "index_directory": str(index.directory) if index else None, "model": str(model_path), "model_sha256": identity,
             "dimensions": len(vector), "self_distance": distance, "device": "cpu",
             "cocoindex_storage": "ok", "offline": True, "network_guard": "python_audit", "sqlite": sqlite3.sqlite_version,
             "dependencies": {name: version(name) for name in ("cocoindex", "sqlite-vec", "sentence-transformers", "torch")},
         }
     if args.command == "index":
-        options = Options(args.path, args.language, args.ignore, args.max_bytes)
-        return index_project(store, project, key, options, model_path, identity, loader(model_path))
+        selection = FileSelection(args.path, args.language, args.ignore, args.max_bytes)
+        checkout = Checkout(project, project, {"kind": "local", "key": key})
+        return index_project(store, checkout, selection, model_path, identity, loader(model_path))
     with index.lock(False):
-        previous = index.manifest()
+        previous = index.read_manifest()
         if previous.get("model_sha256") not in (None, identity):
             raise Failure("model_mismatch", f"Model assets differ from the index; restore the original model or move {index.directory} aside and reindex", 4)
         if not previous["ready"]:
             raise Failure("index_incomplete", "Last index did not complete; run index again before searching", 4)
         model = load_model(model_path)
         vector = embed(model, [args.query])[0].tobytes()
-        return {"project": previous["project"], "key": key, "index_directory": str(index.directory), "query": args.query,
-                "results": search_rows(index, args, vector)}
+        return {"project": previous["project"], "key": key, "index_directory": str(index.directory), **revision_fields(previous),
+                "query": args.query, "results": search_rows(index, args, vector)}
 
 
 def manage(args, store, registry):
     if args.command == "list":
-        tracked = {entry.resolved_key(): entry for entry in registry.entries()}
+        tracked = {entry.current_key(): entry for entry in registry.entries()}
         stored = {index.key: index for index in store.all()}
         rows = []
         for key in sorted(set(tracked) | set(stored)):
@@ -185,13 +203,13 @@ def manage(args, store, registry):
             info = index.info if index else {}
             rows.append({"key": key, "tracked": entry is not None, "source": entry.source if entry else None,
                          "project": info.get("project"), "index_directory": str(index.directory) if index else None,
-                         "ready": info.get("ready", False), "indexed_at": info.get("indexed_at")})
+                         "ready": info.get("ready", False), "indexed_at": info.get("indexed_at"), **revision_fields(info)})
         return {"registry": str(registry.path), "repos": rows}
     if args.command == "remove":
         with registry.edit() as entries:
-            keys = [entry.resolved_key() for entry in entries]
+            keys = [entry.current_key() for entry in entries]
             indexes = store.all()
-            key = select(args.name, [*((key, entry.path) for key, entry in zip(keys, entries)),
+            key = match_key(args.name, [*((key, entry.local_directory) for key, entry in zip(keys, entries)),
                                      *((index.key, index.project) for index in indexes)])
             if key is None:
                 raise Failure("project_missing", f"No tracked project or index matches {args.name}", 2)
@@ -205,21 +223,27 @@ def manage(args, store, registry):
         if args.max_bytes < 1:
             raise Failure("usage", "--max-bytes must be positive", 2)
         added = []
+        selection = FileSelection(args.path, args.language, args.ignore, args.max_bytes)
         with registry.edit() as entries:
-            keys = [entry.resolved_key() for entry in entries]
+            keys = [entry.current_key() for entry in entries]
             for raw in args.sources:
-                project = Path(raw).expanduser().resolve()
-                if not project.is_dir():
-                    raise Failure("project_missing", f"Project directory does not exist: {project}", 2)
-                entry = Entry(str(project), project_key(project), Options(args.path, args.language, args.ignore, args.max_bytes))
-                if entry.key in keys:
-                    entries[keys.index(entry.key)] = entry
+                origin = source_from_argument(raw)
+                if isinstance(origin, LocalSource):
+                    if not origin.path.is_dir():
+                        raise Failure("project_missing", f"Project directory does not exist: {origin.path}", 2)
+                    if args.ref:
+                        raise Failure("usage", f"--ref applies only to remote repositories, not {origin.path}", 2)
+                    entry = Entry(str(origin.path), origin.key, selection)
+                else:
+                    entry = Entry(origin.key, selection=selection, ref=args.ref)
+                if entry.current_key() in keys:
+                    entries[keys.index(entry.current_key())] = entry
                 else:
                     entries.append(entry)
-                    keys.append(entry.key)
+                    keys.append(entry.current_key())
                 added.append(entry)
         if args.no_sync:
-            return {"registry": str(registry.path), "repos": [{"source": entry.source, "key": entry.key} for entry in added]}
+            return {"registry": str(registry.path), "repos": [{"source": entry.source, "key": entry.current_key()} for entry in added]}
         return sync(added, args.model, store, registry)
     return sync(registry.entries(), args.model, store, registry)
 
@@ -230,11 +254,16 @@ def sync(entries, model, store, registry):
     results = []
     for entry in entries:
         try:
-            project = entry.path
-            if project is None or not project.is_dir():
-                raise Failure("project_missing", f"Project directory does not exist: {entry.source}", 2)
-            result = index_project(store, project, entry.resolved_key(), entry.options, model_path, identity, load)
-            results.append({"source": entry.source, "ok": True, **result})
+            origin = entry.origin
+            revision = origin.latest_revision(entry.ref)
+            index = store.get(origin.key) if revision else None
+            if index and index_holds_commit(index.info, revision.commit, entry.selection, identity):
+                results.append({"source": entry.source, "ok": True, "unchanged": True, "project": None, "key": index.key,
+                                "index_directory": str(index.directory), **revision_fields(index.info)})
+                continue
+            with origin.checkout(entry.ref, revision) as checkout:
+                result = index_project(store, checkout, entry.selection, model_path, identity, load)
+            results.append({"source": entry.source, "ok": True, "unchanged": False, **result})
         except Exception as exc:
             failure = as_failure(exc)
             results.append({"source": entry.source, "ok": False, "error": {"code": failure.code, "message": str(failure)}})
@@ -263,8 +292,11 @@ def search_rows(index, args, vector):
             "FROM passages" + where + " ORDER BY distance, path, start_line, id LIMIT ?",
             [*parameters, args.limit],
         ).fetchall()
+    permalink = (index.info.get("source") or {}).get("permalink")
     return [
-        {**dict(row), "score": max(-1.0, min(1.0, 1.0 - row["distance"] ** 2 / 2.0))} for row in rows
+        {**dict(row), "score": max(-1.0, min(1.0, 1.0 - row["distance"] ** 2 / 2.0)),
+         **({"url": permalink.format(path=quote(row["path"]), start=row["start_line"], end=row["end_line"])} if permalink else {})}
+        for row in rows
     ]
 
 
@@ -281,19 +313,19 @@ def search_all(args, store):
     for directory in directories:
         try:
             index = indexes.get(directory)
-            if index is None or index.project is None:
+            if index is None:
                 raise Failure("index_incompatible", "Index has no valid project identity", 4)
             with index.lock(False):
-                info = index.manifest()
+                info = index.read_manifest()
                 if not info.get("ready"):
                     raise Failure("index_incomplete", "Last index did not complete; run index again", 4)
                 if info.get("model_sha256") != identity:
                     raise Failure("model_mismatch", "Index uses different model assets; select a compatible project with --project", 4)
                 results.extend({**row, "project": info["project"], "key": index.key} for row in search_rows(index, args, vector))
-                projects.append(info["project"])
+                projects.append(info["project"] or index.key)
         except Failure as exc:
             raise Failure(exc.code, f"{directory}: {exc}", exc.exit_code) from exc
-    results.sort(key=lambda row: (row["distance"], row["project"], row["path"], row["start_line"], row["end_line"], row["text"]))
+    results.sort(key=lambda row: (row["distance"], row["key"], row["path"], row["start_line"], row["end_line"], row["text"]))
     return {"project": None, "projects": sorted(projects), "query": args.query, "results": results[:args.limit]}
 
 
