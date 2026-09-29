@@ -10,19 +10,11 @@ import tomllib
 from .keys import local_key
 from .errors import ExitCode, Failure
 from .paths import registry_path
+from .selection import FileSelection
 from .sources import LocalSource, source_from_registry
 
-DEFAULT_MAX_BYTES = 1_048_576
 TOML_FIELDS = ("source", "key", "ref", "paths", "languages", "ignores", "max_bytes")
 REGISTRY_HEADER = "# Projects tracked by delphi-code. Edit freely; add and remove rewrite this file without comments.\n"
-
-
-@dataclass
-class FileSelection:
-    paths: list[str] = field(default_factory=list)
-    languages: list[str] = field(default_factory=list)
-    ignores: list[str] = field(default_factory=list)
-    max_bytes: int = DEFAULT_MAX_BYTES
 
 
 @dataclass

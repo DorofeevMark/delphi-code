@@ -14,6 +14,7 @@ from delphi_code.cli import arguments, execute
 from delphi_code.errors import Failure
 from delphi_code.keys import local_key
 from delphi_code.store import Store
+from fakes import use_fake_model
 
 
 class CrossProjectSearch(unittest.TestCase):
@@ -22,9 +23,7 @@ class CrossProjectSearch(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
         self.enterContext(patch.dict(os.environ, {"DELPHI_CODE_INDEX_ROOT": str(self.root / "indexes")}))
-        self.enterContext(patch("delphi_code.cli.inspect_model", return_value=(self.root / "model", "same-model")))
-        self.enterContext(patch("delphi_code.cli.load_model"))
-        self.embedding = self.enterContext(patch("delphi_code.cli.embed", return_value=np.array([[1, 0]], dtype=np.float32)))
+        self.model = use_fake_model(self, self.root / "model")
 
     def register(self, name, rows, **updates):
         project = self.root / name
@@ -58,7 +57,7 @@ class CrossProjectSearch(unittest.TestCase):
         self.assertIsNone(data["project"])
         self.assertEqual(data["projects"], sorted([str(first), str(second)]))
         self.assertEqual([(r["project"], r["path"]) for r in data["results"]], [(str(second), "best.py"), (str(first), "b.py")])
-        self.embedding.assert_called_once()
+        self.assertEqual(len(self.model.embedded), 1)
         scoped = self.search("-p", "one", "--limit", "1")
         self.assertEqual(scoped["project"], str(first))
         self.assertEqual(scoped["results"][0]["path"], "b.py")

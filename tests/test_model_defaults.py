@@ -25,17 +25,17 @@ class ModelIdentity(unittest.TestCase):
         import json
         import tempfile
 
-        from delphi_code.model import inspect_model
+        from delphi_code.model import LocalModel
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "modules.json").write_text(json.dumps([{"type": "sentence_transformers.models.Normalize", "path": ""}]))
             (root / "model.safetensors").write_bytes(b"weights")
-            _, before = inspect_model(root)
+            before = LocalModel.inspect(root).sha256
             (root / ".DS_Store").write_bytes(b"finder")
             (root / "._model.safetensors").write_bytes(b"resource fork")
             (root / "README.md").write_text("model card")
             (root / "LICENSE").write_text("license")
-            self.assertEqual(inspect_model(root)[1], before)
+            self.assertEqual(LocalModel.inspect(root).sha256, before)
             (root / "model.safetensors").write_bytes(b"changed")
-            self.assertNotEqual(inspect_model(root)[1], before)
+            self.assertNotEqual(LocalModel.inspect(root).sha256, before)

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 
 import cocoindex as coco
 import numpy as np
@@ -9,7 +10,12 @@ from cocoindex.resources.id import IdGenerator
 from cocoindex.resources.schema import VectorSchema
 
 from .errors import ExitCode, Failure
-from .model import embed
+from .files import SourceFile
+from .model import LocalModel
+
+CHUNK_CHARACTERS = 900
+MIN_CHUNK_CHARACTERS = 180
+CHUNK_OVERLAP_CHARACTERS = 100
 
 MODEL = coco.ContextKey("local_model")
 DATABASE = coco.ContextKey("vector_database")
@@ -26,22 +32,25 @@ class Passage:
     vector: NDArray[np.float32]
 
 
-@coco.fn(memo=True)
-async def ingest(source: tuple[str, str, str], target: sqlite.TableTarget[Passage], identity: str):
-    path, language, text = source
-    pieces = RecursiveSplitter().split(text, chunk_size=900, min_chunk_size=180, chunk_overlap=100, language=language)
-    vectors = embed(coco.use_context(MODEL), [piece.text for piece in pieces])
-    ids = IdGenerator()
-    for piece, vector in zip(pieces, vectors):
-        end_line = piece.end.line - (1 if piece.end.column == 1 and piece.end.line > piece.start.line else 0)
-        target.declare_row(row=Passage(
-            await ids.next_id((piece.start.char_offset, piece.text)), path, language,
-            piece.text, piece.start.line, end_line, vector,
-        ))
+async def build_index(directory: Path, files: dict[str, SourceFile], model: LocalModel) -> dict:
+    provider = coco.ContextProvider()
+    provider.provide(MODEL, model)
+    provider.provide(DATABASE, sqlite.connect(directory / "vectors.sqlite", load_vec=True))
+    environment = _storage_environment(directory, provider)
+    app = coco.App(coco.AppConfig(name="delphi-code", environment=environment), build, files, model.sha256, model.dimensions)
+    handle = app.update()
+    await handle
+    stats = handle.stats()
+    ingest_stats = stats.by_component.get("ingest") if stats else None
+    return dict(ingest_stats._asdict()) if ingest_stats else {}
+
+
+async def check_storage(directory: Path):
+    _storage_environment(directory)
 
 
 @coco.fn
-async def build(sources: dict[str, tuple[str, str, str]], identity: str, dimensions: int):
+async def build(files: dict[str, SourceFile], model_sha256: str, dimensions: int):
     schema = await sqlite.TableSchema.from_class(
         Passage, primary_key=["id"], column_overrides={"vector": VectorSchema(np.dtype("float32"), dimensions)},
     )
@@ -49,31 +58,32 @@ async def build(sources: dict[str, tuple[str, str, str]], identity: str, dimensi
         db=DATABASE, table_name="passages", table_schema=schema,
         virtual_table_def=sqlite.Vec0TableDef(auxiliary_columns=["path", "language", "text", "start_line", "end_line"]),
     )
-    await coco.mount_each(ingest, sources.items(), target, identity)
+    await coco.mount_each(ingest, files.items(), target, model_sha256)
 
 
-async def run(state, sources, model, identity):
-    provider = coco.ContextProvider()
-    provider.provide(MODEL, model)
-    connection = sqlite.connect(state / "vectors.sqlite", load_vec=True)
-    provider.provide(DATABASE, connection)
-    environment = storage_environment(state, provider)
-    app = coco.App(coco.AppConfig(name="delphi-code", environment=environment), build, sources, identity, model.get_embedding_dimension())
-    handle = app.update()
-    await handle
-    stats = handle.stats()
-    group = stats.by_component.get("ingest") if stats else None
-    return dict(group._asdict()) if group else {}
+@coco.fn(memo=True)
+async def ingest(source: SourceFile, target: sqlite.TableTarget[Passage], model_sha256: str):
+    path, language, text = source
+    pieces = RecursiveSplitter().split(text, chunk_size=CHUNK_CHARACTERS, min_chunk_size=MIN_CHUNK_CHARACTERS,
+                                       chunk_overlap=CHUNK_OVERLAP_CHARACTERS, language=language)
+    model: LocalModel = coco.use_context(MODEL)
+    vectors = model.embed([piece.text for piece in pieces])
+    ids = IdGenerator()
+    for piece, vector in zip(pieces, vectors):
+        ends_at_line_start = piece.end.column == 1 and piece.end.line > piece.start.line
+        end_line = piece.end.line - 1 if ends_at_line_start else piece.end.line
+        target.declare_row(row=Passage(
+            await ids.next_id((piece.start.char_offset, piece.text)), path, language,
+            piece.text, piece.start.line, end_line, vector,
+        ))
 
 
-def storage_environment(state, provider=None):
+def _storage_environment(directory: Path, provider=None):
     try:
-        return coco.Environment(coco.Settings(db_path=state / "incremental"), context_provider=provider)
+        return coco.Environment(coco.Settings(db_path=directory / "incremental"), context_provider=provider)
     except RuntimeError as exc:
         if "Operation not permitted" in str(exc):
-            raise Failure("sandbox_storage_denied", "Sandbox denied CocoIndex storage initialization; use a sandbox allowing its native storage operations while keeping network access denied", ExitCode.RUNTIME_ASSETS) from exc
+            raise Failure("sandbox_storage_denied",
+                          "Sandbox denied CocoIndex storage initialization; use a sandbox allowing its native storage operations while keeping network access denied",
+                          ExitCode.RUNTIME_ASSETS) from exc
         raise
-
-
-async def check_storage(state):
-    storage_environment(state)

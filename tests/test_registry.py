@@ -9,8 +9,10 @@ from unittest.mock import patch
 from delphi_code.cli import arguments, execute
 from delphi_code.errors import Failure
 from delphi_code.keys import local_key
-from delphi_code.registry import Entry, FileSelection, Registry
+from delphi_code.registry import Entry, Registry
+from delphi_code.selection import FileSelection
 from delphi_code.store import Store
+from fakes import use_fake_model
 
 
 class RegistryCommands(unittest.TestCase):
@@ -20,16 +22,16 @@ class RegistryCommands(unittest.TestCase):
         self.root = Path(temporary.name).resolve()
         self.registry = self.root / "repos.toml"
         self.enterContext(patch.dict(os.environ, {"DELPHI_CODE_INDEX_ROOT": str(self.root / "indexes"), "DELPHI_CODE_REGISTRY": str(self.registry)}))
-        self.enterContext(patch("delphi_code.cli.check_runtime", return_value=(self.root / "model", "same-model")))
+        use_fake_model(self, self.root / "model")
         self.indexed = []
 
-        def index_project(store, checkout, options, model_path, identity, load):
-            key = checkout.provenance["key"]
+        def index_checkout(store, checkout, options, model):
+            key = checkout.key
             self.indexed.append((checkout.project, key, options))
             index = store.get_or_create(key, checkout.project)
             return {"project": str(checkout.project), "key": key, "index_directory": str(index.directory)}
 
-        self.enterContext(patch("delphi_code.cli.index_project", side_effect=index_project))
+        self.enterContext(patch("delphi_code.projects.index_checkout", side_effect=index_checkout))
 
     def run_command(self, *args):
         with patch.object(sys, "argv", ["delphi-code", *args]):

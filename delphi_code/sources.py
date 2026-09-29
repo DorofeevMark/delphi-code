@@ -30,6 +30,10 @@ class Checkout(NamedTuple):
     project: Path | None
     provenance: dict
 
+    @property
+    def key(self) -> str:
+        return self.provenance["key"]
+
 
 class Source(Protocol):
     key: str

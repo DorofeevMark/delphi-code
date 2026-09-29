@@ -33,11 +33,11 @@ class Setup(unittest.TestCase):
 
     def test_import_and_reuse_without_download(self):
         with patch("delphi_code.setup.diagnose", return_value={}) as doctor, patch("delphi_code.setup.download") as download:
-            first = provision(self.args)
+            first = provision(self.args.model, self.args.source)
             self.assertFalse(first["reused"])
             self.assertEqual(Path(first["model"]).joinpath("model.safetensors").read_bytes(), b"weights")
             self.args.source = None
-            self.assertTrue(provision(self.args)["reused"])
+            self.assertTrue(provision(self.args.model, self.args.source)["reused"])
             self.assertEqual(doctor.call_count, 2)
             download.assert_not_called()
 
@@ -46,13 +46,13 @@ class Setup(unittest.TestCase):
         destination.mkdir(parents=True)
         (destination / "model.safetensors").write_bytes(b"corrupt")
         with self.assertRaisesRegex(Failure, "Existing assets were preserved"):
-            provision(self.args)
+            provision(self.args.model, self.args.source)
         self.assertEqual((destination / "model.safetensors").read_bytes(), b"corrupt")
 
     def test_failed_diagnostics_does_not_publish(self):
         with patch("delphi_code.setup.diagnose", side_effect=Failure("broken", "diagnostic failed", ExitCode.OPERATION)):
             with self.assertRaises(Failure):
-                provision(self.args)
+                provision(self.args.model, self.args.source)
         self.assertFalse(Path(self.args.model).exists())
         self.assertEqual(list(Path(self.args.model).parent.glob(".model-*")), [])
 
@@ -62,7 +62,7 @@ class Setup(unittest.TestCase):
             (destination / "model.safetensors").write_bytes(b"bad download")
         with patch("delphi_code.setup.download", side_effect=fake_download), patch("delphi_code.setup.diagnose") as doctor:
             with self.assertRaisesRegex(Failure, "checksum"):
-                provision(self.args)
+                provision(self.args.model, self.args.source)
             doctor.assert_not_called()
         self.assertFalse(Path(self.args.model).exists())
 
@@ -72,7 +72,7 @@ class Setup(unittest.TestCase):
         with (parent / ".model.setup.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with self.assertRaisesRegex(Failure, "Another setup"):
-                provision(self.args)
+                provision(self.args.model, self.args.source)
 
     def test_download_process_has_online_environment(self):
         with patch("delphi_code.setup.subprocess.run") as run:

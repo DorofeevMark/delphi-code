@@ -12,7 +12,9 @@ from delphi_code.picker import TrackingChanges
 from delphi_code.registry import Registry
 from delphi_code.hosts import Bitbucket, GitHub
 from delphi_code.sources import GitRemoteSource, LocalSource, source_from_registry, source_from_argument
+from delphi_code.manifest import Manifest
 from delphi_code.store import Store
+from fakes import use_fake_model
 
 
 def git(*args, cwd=None):
@@ -134,17 +136,16 @@ class RemoteGitCheckouts(LocalHostWithApiRepository):
 class RemoteSync(LocalHostWithApiRepository):
     def setUp(self):
         super().setUp()
-        self.enterContext(patch("delphi_code.cli.check_runtime", return_value=(self.root / "model", "same-model")))
+        use_fake_model(self, self.root / "model")
         self.checkouts = []
 
-        def index_project(store, checkout, options, model_path, identity, load):
+        def index_checkout(store, checkout, options, model):
             self.checkouts.append(checkout)
-            index = store.get_or_create(checkout.provenance["key"], checkout.project)
-            index.write_manifest({"schema_version": 2, "project": None, "source": checkout.provenance, "ready": True,
-                         "model_sha256": identity, **vars(options)})
+            index = store.get_or_create(checkout.key, checkout.project)
+            index.write_manifest(Manifest.for_build(checkout, options, model).completed())
             return {"project": None, "key": index.key, "index_directory": str(index.directory), "commit": checkout.provenance.get("commit")}
 
-        self.enterContext(patch("delphi_code.cli.index_project", side_effect=index_project))
+        self.enterContext(patch("delphi_code.projects.index_checkout", side_effect=index_checkout))
 
     def run_command(self, *args):
         with patch.object(sys, "argv", ["delphi-code", *args]):
