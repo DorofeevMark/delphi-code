@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from collections.abc import Iterator
 from contextlib import contextmanager
 import copy
 from dataclasses import dataclass, field
@@ -11,7 +14,7 @@ from .errors import ExitCode, Failure
 from .keys import local_key
 from .paths import registry_path
 from .selection import FileSelection
-from .sources import LocalSource, source_from_registry
+from .sources import LocalSource, Source, source_from_registry
 
 TOML_FIELDS = ("source", "key", "ref", "paths", "languages", "ignores", "max_bytes")
 REGISTRY_HEADER = "# Projects tracked by delphi-code. Edit freely; add and remove rewrite this file without comments.\n"
@@ -25,29 +28,31 @@ class Entry:
     ref: str | None = None
 
     @cached_property
-    def origin(self):
-        return source_from_registry(self.source)
+    def origin(self) -> Source:
+        origin = source_from_registry(self.source)
+        if origin is None:
+            raise Failure("registry_invalid", f"Unsupported project source: {self.source}", ExitCode.USAGE)
+        return origin
 
     @property
-    def local_directory(self):
-        return self.origin.path if isinstance(self.origin, LocalSource) else None
+    def local_directory(self) -> Path | None:
+        origin = self.origin
+        return origin.path if isinstance(origin, LocalSource) else None
 
-    def current_key(self):
-        checkout_moved_or_deleted = isinstance(self.origin, LocalSource) and not self.origin.path.is_dir()
-        if checkout_moved_or_deleted:
-            return self.key or local_key(self.origin.path)
-        return self.origin.key
+    def current_key(self) -> str:
+        origin = self.origin
+        if isinstance(origin, LocalSource) and not origin.path.is_dir():
+            return self.key or local_key(origin.path)
+        return origin.key
 
     @classmethod
-    def from_toml(cls, data):
-        if not _is_well_formed_table(data) or source_from_registry(data["source"]) is None:
-            return None
+    def from_toml(cls, data: dict) -> Entry:
         selection = FileSelection(
             **{name: data[name] for name in ("paths", "languages", "ignores", "max_bytes") if name in data}
         )
         return cls(data["source"], data.get("key"), selection, data.get("ref"))
 
-    def to_toml(self):
+    def to_toml(self) -> str:
         values = {"source": self.source, "key": self.key, "ref": self.ref, **vars(self.selection)}
         defaults = vars(FileSelection())
         return "".join(
@@ -58,10 +63,10 @@ class Entry:
 
 
 class Registry:
-    def __init__(self, path=None):
+    def __init__(self, path: Path | str | None = None):
         self.path = Path(path) if path else registry_path()
 
-    def entries(self):
+    def entries(self) -> list[Entry]:
         try:
             data = tomllib.loads(self.path.read_text())
         except FileNotFoundError:
@@ -69,17 +74,17 @@ class Registry:
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
             raise Failure("registry_invalid", f"Cannot read {self.path}: {exc}", ExitCode.USAGE) from exc
         tables = data.get("repo", [])
-        entries = [Entry.from_toml(table) for table in tables] if isinstance(tables, list) else [None]
-        if set(data) - {"repo"} or None in entries:
+        well_formed = isinstance(tables, list) and all(_is_well_formed_table(table) for table in tables)
+        if set(data) - {"repo"} or not well_formed:
             raise Failure(
                 "registry_invalid",
                 f"{self.path}: expected [[repo]] tables with a source (an absolute path, bitbucket.org/workspace/repository, or github.com/owner/repository), optional key and ref strings, optional string lists paths, languages and ignores, and a positive integer max_bytes",
                 ExitCode.USAGE,
             )
-        return entries
+        return [Entry.from_toml(table) for table in tables]
 
     @contextmanager
-    def edit(self):
+    def edit(self) -> Iterator[list[Entry]]:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.with_name(self.path.name + ".lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
@@ -89,7 +94,7 @@ class Registry:
             if edited != original:
                 self._write(edited)
 
-    def _write(self, entries):
+    def _write(self, entries: list[Entry]):
         temporary = self.path.with_name(self.path.name + ".tmp")
         temporary.write_text(REGISTRY_HEADER + "".join("\n[[repo]]\n" + entry.to_toml() for entry in entries))
         temporary.replace(self.path)
@@ -106,6 +111,7 @@ def _is_well_formed_table(data) -> bool:
         and all(_is_string_list(data[name]) for name in ("paths", "languages", "ignores") if name in data)
         and type(data.get("max_bytes", 1)) is int
         and data.get("max_bytes", 1) > 0
+        and source_from_registry(data["source"]) is not None
     )
 
 

@@ -44,7 +44,10 @@ class LocalModel:
 
     @property
     def dimensions(self) -> int:
-        return self._encoder.get_embedding_dimension()
+        dimensions = self._encoder.get_embedding_dimension()
+        if dimensions is None:
+            raise _model_failure("model_invalid", f"Model at {self.directory} does not declare its embedding dimension")
+        return dimensions
 
     def embed(self, texts: list[str]) -> NDArray[np.float32]:
         import numpy as np

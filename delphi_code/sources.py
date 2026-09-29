@@ -1,10 +1,10 @@
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import contextmanager
 from functools import cached_property
 import os
 from pathlib import Path
 import subprocess
 import tempfile
-from typing import NamedTuple, Protocol
+from typing import NamedTuple
 
 from .errors import ExitCode, Failure
 from .hosts import HOSTS_BY_DOMAIN
@@ -33,14 +33,6 @@ class Checkout(NamedTuple):
     @property
     def key(self) -> str:
         return self.provenance["key"]
-
-
-class Source(Protocol):
-    key: str
-
-    def latest_revision(self, ref) -> Revision | None: ...
-
-    def checkout(self, ref, revision) -> AbstractContextManager[Checkout]: ...
 
 
 class LocalSource:
@@ -132,6 +124,9 @@ class GitRemoteSource:
 
     def _git(self, *args):
         return run_git(args, self.key, self.host.clone_credentials(), self.host.credentials_hint)
+
+
+Source = LocalSource | GitRemoteSource
 
 
 def run_git(args, key, credentials, credentials_hint):

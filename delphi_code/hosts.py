@@ -6,7 +6,7 @@ import re
 import ssl
 import subprocess
 import sys
-from typing import NamedTuple
+from typing import Any, NamedTuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -128,7 +128,7 @@ class RepositoryHost:
         with urlopen(Request(url, headers=headers), timeout=REQUEST_TIMEOUT_SECONDS, context=tls) as response:
             return json.load(response), (response.headers.get("Link") if response.headers else None) or ""
 
-    def _list_in_child_process(self, listing, *arguments):
+    def _list_in_child_process(self, listing, *arguments) -> list[dict]:
         environment = dict(os.environ, DELPHI_CODE_API_AUTHORIZATION=self._api_authorization)
         try:
             result = subprocess.run(
@@ -144,6 +144,7 @@ class RepositoryHost:
                 f"{self.name} did not answer within {LISTING_TIMEOUT_SECONDS} seconds",
                 ExitCode.OPERATION,
             ) from exc
+        payload: Any
         try:
             payload = json.loads(result.stdout)
         except ValueError:

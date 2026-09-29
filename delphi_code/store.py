@@ -108,7 +108,8 @@ class Index:
             return dict(db.execute("SELECT count(*) AS chunks, count(DISTINCT path) AS files FROM passages").fetchone())
 
     def search(self, query_vector: bytes, paths: list[str], languages: list[str], limit: int) -> list[dict]:
-        conditions, parameters = [], [query_vector]
+        conditions: list[str] = []
+        parameters: list[bytes | str] = [query_vector]
         if languages:
             conditions.append("language IN (" + ",".join("?" for _ in languages) + ")")
             parameters.extend(languages)
@@ -204,21 +205,27 @@ class Store:
     def _assign_keys_to_legacy_indexes(self, indexes: list[Index], legacy_directories: list[Path]) -> list[Index]:
         taken_keys = {index.key for index in indexes}
         for directory in legacy_directories:
-            with (directory / "lock").open("a") as lock:
-                try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    continue
-                legacy = Manifest.read_if_valid_json(directory / "manifest.json")
-                project = legacy.project
-                key = project_key(project)
-                unique_key = key if key not in taken_keys else local_key(project)
-                manifest = legacy.upgraded_with_key(unique_key)
-                index = Index(directory, unique_key, project, manifest)
-                index.write_manifest(manifest)
-            taken_keys.add(unique_key)
-            indexes.append(index)
+            if index := _upgrade_legacy_index(directory, taken_keys):
+                taken_keys.add(index.key)
+                indexes.append(index)
         return sorted(indexes, key=lambda index: index.directory)
+
+
+def _upgrade_legacy_index(directory: Path, taken_keys: set[str]) -> Index | None:
+    with (directory / "lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return None
+        legacy = Manifest.read_if_valid_json(directory / "manifest.json")
+        if legacy is None or legacy.project is None or not _is_legacy(legacy):
+            return None
+        key = project_key(legacy.project)
+        unique_key = key if key not in taken_keys else local_key(legacy.project)
+        manifest = legacy.upgraded_with_key(unique_key)
+        index = Index(directory, unique_key, legacy.project, manifest)
+        index.write_manifest(manifest)
+        return index
 
 
 def _is_legacy(manifest: Manifest | None) -> bool:

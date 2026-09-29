@@ -54,7 +54,7 @@ async def check_storage(directory: Path):
 @coco.fn
 async def build(files: dict[str, SourceFile], model_sha256: str, dimensions: int):
     schema = await sqlite.TableSchema.from_class(
-        Passage,
+        Passage,  # pyright: ignore[reportArgumentType]
         primary_key=["id"],
         column_overrides={"vector": VectorSchema(np.dtype("float32"), dimensions)},
     )
@@ -64,7 +64,7 @@ async def build(files: dict[str, SourceFile], model_sha256: str, dimensions: int
         table_schema=schema,
         virtual_table_def=sqlite.Vec0TableDef(auxiliary_columns=["path", "language", "text", "start_line", "end_line"]),
     )
-    await coco.mount_each(ingest, files.items(), target, model_sha256)
+    await coco.mount_each(ingest, files.items(), target, model_sha256)  # pyright: ignore[reportCallIssue, reportArgumentType]
 
 
 @coco.fn(memo=True)

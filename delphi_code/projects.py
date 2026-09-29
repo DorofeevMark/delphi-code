@@ -226,12 +226,14 @@ def add_picked_repositories(
     try:
         return {**sync(store, registry, added, model_location), "cancelled": False, "removed": removed}
     except Failure as failure:
-        failure.data.update(cancelled=False, removed=removed)
+        failure.data = {**(failure.data or {}), "cancelled": False, "removed": removed}
         raise
 
 
 def sync(store: Store, registry: Registry, entries: list[Entry], model_location: str) -> dict:
-    model = open_model(model_location) if entries else None
+    if not entries:
+        return {"registry": str(registry.path), "repos": []}
+    model = open_model(model_location)
     results = []
     for entry in entries:
         try:
@@ -255,7 +257,7 @@ def _sync_entry(store: Store, entry: Entry, model: LocalModel) -> dict:
     origin = entry.origin
     revision = origin.latest_revision(entry.ref)
     index = store.get(origin.key) if revision else None
-    if index and index.manifest.holds(revision.commit, entry.selection, model):
+    if revision and index and index.manifest.holds(revision.commit, entry.selection, model):
         return {
             "unchanged": True,
             "project": None,
