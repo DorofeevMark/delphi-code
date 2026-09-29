@@ -1,7 +1,7 @@
 import sys
 from typing import NamedTuple
 
-from .model import Failure
+from .errors import ExitCode, Failure
 
 DESCRIPTION_WIDTH = 60
 
@@ -29,7 +29,7 @@ class RepositoryPicker:
 
             hosts = configured_hosts()
         if not hosts:
-            raise Failure("remote_auth_missing", "Picking repositories needs Bitbucket or GitHub credentials: set BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD or GITHUB_TOKEN, sign in with gh auth login, or store git credentials for bitbucket.org or github.com", 3)
+            raise Failure("remote_auth_missing", "Picking repositories needs Bitbucket or GitHub credentials: set BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD or GITHUB_TOKEN, sign in with gh auth login, or store git credentials for bitbucket.org or github.com", ExitCode.RUNTIME_ASSETS)
         self._hosts = hosts
 
     def choose(self, tracked_keys):
@@ -41,7 +41,7 @@ class RepositoryPicker:
             return None
         repositories = host.repositories(owner)
         if not repositories:
-            raise Failure("remote_empty", f"You have no repositories in the {host.name} {host.owner_noun} {owner}", 2)
+            raise Failure("remote_empty", f"You have no repositories in the {host.name} {host.owner_noun} {owner}", ExitCode.USAGE)
         chosen_keys = self._choose_repositories(owner, repositories, tracked_keys)
         if chosen_keys is None:
             return None
@@ -65,7 +65,7 @@ class RepositoryPicker:
 
         owners = host.owners()
         if not owners:
-            raise Failure("remote_empty", f"Your {host.name} account has no repositories", 2)
+            raise Failure("remote_empty", f"Your {host.name} account has no repositories", ExitCode.USAGE)
         if len(owners) == 1:
             return owners[0].slug
         return questionary.select(
@@ -104,7 +104,7 @@ def _repository_title(repository):
 
 def _stderr_terminal():
     if not (sys.stdin.isatty() and sys.stderr.isatty()):
-        raise Failure("usage", "Pass SOURCE arguments, or run add in a terminal to pick repositories", 2)
+        raise Failure("usage", "Pass SOURCE arguments, or run add in a terminal to pick repositories", ExitCode.USAGE)
     from prompt_toolkit.input import create_input
     from prompt_toolkit.output import create_output
 

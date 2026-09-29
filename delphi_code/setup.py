@@ -10,7 +10,8 @@ import subprocess
 import sys
 import tempfile
 
-from .model import Failure, incidental
+from .errors import ExitCode, Failure
+from .model import incidental
 from .paths import index_root
 
 
@@ -19,15 +20,15 @@ def verify_assets(root):
     for name, expected in manifest["sha256"].items():
         path = root / name
         if not path.is_file() or path.is_symlink():
-            raise Failure("model_invalid", f"Missing or linked model asset: {path}")
+            raise Failure("model_invalid", f"Missing or linked model asset: {path}", ExitCode.RUNTIME_ASSETS)
         with path.open("rb") as stream:
             actual = hashlib.file_digest(stream, "sha256").hexdigest()
         if actual != expected:
-            raise Failure("model_invalid", f"Model asset checksum mismatch: {path}")
+            raise Failure("model_invalid", f"Model asset checksum mismatch: {path}", ExitCode.RUNTIME_ASSETS)
     allowed = set(manifest["sha256"]) | {"provenance.json"}
     for path in root.rglob("*"):
         if not incidental(path.relative_to(root)) and path.is_file() and path.relative_to(root).as_posix() not in allowed:
-            raise Failure("model_invalid", f"Unexpected model asset: {path}")
+            raise Failure("model_invalid", f"Unexpected model asset: {path}", ExitCode.RUNTIME_ASSETS)
     return manifest
 
 
@@ -39,7 +40,7 @@ def download(destination):
         env=env, stdout=sys.stderr, stderr=sys.stderr,
     )
     if result.returncode:
-        raise Failure("setup_download_failed", "Model download failed; check connectivity and rerun delphi-code setup, or use delphi-code setup --from /path/to/model", 3)
+        raise Failure("setup_download_failed", "Model download failed; check connectivity and rerun delphi-code setup, or use delphi-code setup --from /path/to/model", ExitCode.RUNTIME_ASSETS)
 
 
 def diagnose(model):
@@ -65,12 +66,12 @@ def provision(args):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise Failure("setup_busy", "Another setup is running for this model; retry when it finishes", 5) from exc
+            raise Failure("setup_busy", "Another setup is running for this model; retry when it finishes", ExitCode.OPERATION) from exc
         if destination.exists():
             try:
                 verify_assets(destination)
             except Failure as exc:
-                raise Failure(exc.code, f"{exc}. Existing assets were preserved. Move {destination} aside, then rerun delphi-code setup --model {shlex.quote(str(destination))}", 3) from exc
+                raise Failure(exc.code, f"{exc}. Existing assets were preserved. Move {destination} aside, then rerun delphi-code setup --model {shlex.quote(str(destination))}", ExitCode.RUNTIME_ASSETS) from exc
             diagnostics = diagnose(destination)
             reused = True
         else:

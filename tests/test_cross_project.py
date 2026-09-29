@@ -11,7 +11,7 @@ import numpy as np
 import sqlite_vec
 
 from delphi_code.cli import arguments, execute
-from delphi_code.model import Failure
+from delphi_code.errors import Failure
 from delphi_code.keys import local_key
 from delphi_code.store import Store
 

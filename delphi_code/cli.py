@@ -12,7 +12,8 @@ import tempfile
 from urllib.parse import quote
 from datetime import datetime, timezone
 
-from .model import Failure, embed, inspect_model, load_model
+from .errors import ExitCode, Failure
+from .model import embed, inspect_model, load_model
 from .keys import match_key
 from .paths import model_directory
 from .registry import DEFAULT_MAX_BYTES, Entry, FileSelection, Registry
@@ -22,7 +23,7 @@ from .store import SCHEMA_VERSION, Store
 
 class Parser(argparse.ArgumentParser):
     def error(self, message):
-        raise Failure("usage", message, 2)
+        raise Failure("usage", message, ExitCode.USAGE)
 
 
 def selection_options(command, indexing):
@@ -71,15 +72,8 @@ def arguments():
 def check_runtime(model):
     model_path, identity = inspect_model(model)
     if not hasattr(sqlite3.Connection, "enable_load_extension"):
-        raise Failure("sqlite_extensions_unavailable", "This Python disables SQLite extension loading; provision a Python build with loadable SQLite extensions", 3)
+        raise Failure("sqlite_extensions_unavailable", "This Python disables SQLite extension loading; provision a Python build with loadable SQLite extensions", ExitCode.RUNTIME_ASSETS)
     return model_path, identity
-
-
-def as_failure(exc):
-    if isinstance(exc, Failure):
-        return exc
-    missing = isinstance(exc, ModuleNotFoundError)
-    return Failure("dependency_missing" if missing else "runtime_error", str(exc), 3 if missing else 5)
 
 
 def index_project(store, checkout, selection, model_path, identity, load):
@@ -90,7 +84,7 @@ def index_project(store, checkout, selection, model_path, identity, load):
     index = store.get_or_create(key, checkout.project)
     with index.lock(True):
         if index.read_manifest().get("model_sha256") not in (None, identity):
-            raise Failure("model_mismatch", f"Model assets differ from the index; restore the original model or move {index.directory} aside and reindex", 4)
+            raise Failure("model_mismatch", f"Model assets differ from the index; restore the original model or move {index.directory} aside and reindex", ExitCode.INDEX_STATE)
         model = load()
         sources, skipped = collect(checkout.directory, selection.paths, selection.languages, selection.ignores, model_path, selection.max_bytes)
         info = {
@@ -135,23 +129,23 @@ def execute(args):
     if args.command in {"add", "sync", "list", "remove"}:
         return manage(args, store, Registry())
     if args.command == "search" and (not args.query.strip() or not 1 <= args.limit <= 1000):
-        raise Failure("usage", "Query must be nonempty and --limit must be between 1 and 1000", 2)
+        raise Failure("usage", "Query must be nonempty and --limit must be between 1 and 1000", ExitCode.USAGE)
     if args.command == "search" and args.project is None:
         return search_all(args, store)
     project, key, index = store.resolve(args.project)
     if args.command == "index" and index and index.project is None:
-        raise Failure("usage", f"{key} is a remote repository; update it with delphi-code sync", 2)
+        raise Failure("usage", f"{key} is a remote repository; update it with delphi-code sync", ExitCode.USAGE)
     exists = project is not None and project.is_dir()
     if not exists and (index is None or args.command == "index"):
-        raise Failure("project_missing", f"Project directory does not exist: {project}", 2)
+        raise Failure("project_missing", f"Project directory does not exist: {project}", ExitCode.USAGE)
     if args.command in {"search", "status"} and index is None:
-        raise Failure("index_missing", f"No index exists; run delphi-code index -p {shlex.quote(str(project))}", 4)
+        raise Failure("index_missing", f"No index exists; run delphi-code index -p {shlex.quote(str(project))}", ExitCode.INDEX_STATE)
     if args.command == "status":
         with index.lock(False):
             info = index.read_manifest()
             return {"key": key, "index_directory": str(index.directory), **info, **(index.counts() if info["ready"] else {})}
     if args.command == "index" and args.max_bytes < 1:
-        raise Failure("usage", "--max-bytes must be positive", 2)
+        raise Failure("usage", "--max-bytes must be positive", ExitCode.USAGE)
     model_path, identity = check_runtime(args.model)
     if args.command == "doctor":
         import cocoindex
@@ -184,9 +178,9 @@ def execute(args):
     with index.lock(False):
         previous = index.read_manifest()
         if previous.get("model_sha256") not in (None, identity):
-            raise Failure("model_mismatch", f"Model assets differ from the index; restore the original model or move {index.directory} aside and reindex", 4)
+            raise Failure("model_mismatch", f"Model assets differ from the index; restore the original model or move {index.directory} aside and reindex", ExitCode.INDEX_STATE)
         if not previous["ready"]:
-            raise Failure("index_incomplete", "Last index did not complete; run index again before searching", 4)
+            raise Failure("index_incomplete", "Last index did not complete; run index again before searching", ExitCode.INDEX_STATE)
         model = load_model(model_path)
         vector = embed(model, [args.query])[0].tobytes()
         return {"project": previous["project"], "key": key, "index_directory": str(index.directory), **revision_fields(previous),
@@ -208,7 +202,7 @@ def manage(args, store, registry):
     if args.command == "remove":
         return remove_project(args, store, registry)
     if args.command == "add" and args.max_bytes < 1:
-        raise Failure("usage", "--max-bytes must be positive", 2)
+        raise Failure("usage", "--max-bytes must be positive", ExitCode.USAGE)
     if args.command == "add" and not args.sources:
         return add_picked_repositories(args, store, registry)
     if args.command == "add":
@@ -222,7 +216,7 @@ def remove_project(args, store, registry):
         key = match_key(args.name, [*((key, entry.local_directory) for key, entry in zip(keys, entries)),
                                     *((index.key, index.project) for index in store.all())])
         if key is None:
-            raise Failure("project_missing", f"No tracked project or index matches {args.name}", 2)
+            raise Failure("project_missing", f"No tracked project or index matches {args.name}", ExitCode.USAGE)
         untracked = key in keys
         entries[:] = [entry for candidate, entry in zip(keys, entries) if candidate != key]
         deleted = None if args.keep_index else delete_index(store, key)
@@ -246,9 +240,9 @@ def add_sources(args, store, registry):
             origin = source_from_argument(raw)
             if isinstance(origin, LocalSource):
                 if not origin.path.is_dir():
-                    raise Failure("project_missing", f"Project directory does not exist: {origin.path}", 2)
+                    raise Failure("project_missing", f"Project directory does not exist: {origin.path}", ExitCode.USAGE)
                 if args.ref:
-                    raise Failure("usage", f"--ref applies only to remote repositories, not {origin.path}", 2)
+                    raise Failure("usage", f"--ref applies only to remote repositories, not {origin.path}", ExitCode.USAGE)
                 entry = Entry(str(origin.path), origin.key, selection)
             else:
                 entry = Entry(origin.key, selection=selection, ref=args.ref)
@@ -301,12 +295,12 @@ def sync(entries, model, store, registry):
                 result = index_project(store, checkout, entry.selection, model_path, identity, load)
             results.append({"source": entry.source, "ok": True, "unchanged": False, **result})
         except Exception as exc:
-            failure = as_failure(exc)
-            results.append({"source": entry.source, "ok": False, "error": {"code": failure.code, "message": str(failure)}})
+            failure = Failure.from_exception(exc)
+            results.append({"source": entry.source, "ok": False, "error": failure.to_json()})
     data = {"registry": str(registry.path), "repos": results}
     failed = [result["source"] for result in results if not result["ok"]]
     if failed:
-        raise Failure("sync_failed", f"{len(failed)} of {len(results)} tracked projects failed: {', '.join(failed)}", 5, data)
+        raise Failure("sync_failed", f"{len(failed)} of {len(results)} tracked projects failed: {', '.join(failed)}", ExitCode.OPERATION, data)
     return data
 
 
@@ -340,7 +334,7 @@ def search_all(args, store):
     store.all()
     directories = sorted(path for path in store.root.glob("*") if path.is_dir())
     if not directories:
-        raise Failure("index_missing", "No indexes exist; run delphi-code index -p /absolute/path/to/project first", 4)
+        raise Failure("index_missing", "No indexes exist; run delphi-code index -p /absolute/path/to/project first", ExitCode.INDEX_STATE)
     model_path, identity = check_runtime(args.model)
     model = load_model(model_path)
     vector = embed(model, [args.query])[0].tobytes()
@@ -350,13 +344,13 @@ def search_all(args, store):
         try:
             index = indexes.get(directory)
             if index is None:
-                raise Failure("index_incompatible", "Index has no valid project identity", 4)
+                raise Failure("index_incompatible", "Index has no valid project identity", ExitCode.INDEX_STATE)
             with index.lock(False):
                 info = index.read_manifest()
                 if not info.get("ready"):
-                    raise Failure("index_incomplete", "Last index did not complete; run index again", 4)
+                    raise Failure("index_incomplete", "Last index did not complete; run index again", ExitCode.INDEX_STATE)
                 if info.get("model_sha256") != identity:
-                    raise Failure("model_mismatch", "Index uses different model assets; select a compatible project with --project", 4)
+                    raise Failure("model_mismatch", "Index uses different model assets; select a compatible project with --project", ExitCode.INDEX_STATE)
                 results.extend({**row, "project": info["project"], "key": index.key} for row in search_rows(index, args, vector))
                 projects.append(info["project"] or index.key)
         except Failure as exc:
@@ -379,11 +373,11 @@ def main():
             import traceback
 
             traceback.print_exc(file=sys.stderr)
-        failure = as_failure(exc)
+        failure = Failure.from_exception(exc)
         exit_code = failure.exit_code
         print(f"delphi-code: {failure}", file=sys.stderr)
         payload = {"schema_version": 1, "ok": False, "command": command,
-                   "error": {"code": failure.code, "message": str(failure)}}
+                   "error": failure.to_json()}
         if failure.data is not None:
             payload["data"] = failure.data
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False))

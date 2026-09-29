@@ -9,7 +9,7 @@ import sqlite3
 from typing import NamedTuple
 
 from .keys import is_explicit_path, local_key, match_key, project_key
-from .model import Failure
+from .errors import ExitCode, Failure
 from .paths import index_root
 
 SCHEMA_VERSION = 2
@@ -53,23 +53,23 @@ class Index:
         if exclusive:
             self.directory.mkdir(parents=True, exist_ok=True)
         if not self.directory.is_dir():
-            raise Failure("index_missing", "No index exists; run index first", 4)
+            raise Failure("index_missing", "No index exists; run index first", ExitCode.INDEX_STATE)
         try:
             with (self.directory / "lock").open("a" if exclusive else "r") as lock:
                 try:
                     fcntl.flock(lock, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
                 except BlockingIOError as exc:
-                    raise Failure("index_busy", "Another command is updating this project", 5) from exc
+                    raise Failure("index_busy", "Another command is updating this project", ExitCode.OPERATION) from exc
                 yield
         except FileNotFoundError as exc:
-            raise Failure("index_missing", "No index exists; run index first", 4) from exc
+            raise Failure("index_missing", "No index exists; run index first", ExitCode.INDEX_STATE) from exc
 
     def read_manifest(self):
         if not (self.directory / "manifest.json").is_file():
-            raise Failure("index_missing", "No completed index exists; run index first", 4)
+            raise Failure("index_missing", "No completed index exists; run index first", ExitCode.INDEX_STATE)
         manifest = json.loads((self.directory / "manifest.json").read_text())
         if manifest.get("schema_version") != SCHEMA_VERSION:
-            raise Failure("index_incompatible", "Unsupported index version", 4)
+            raise Failure("index_incompatible", "Unsupported index version", ExitCode.INDEX_STATE)
         return manifest
 
     def write_manifest(self, manifest):

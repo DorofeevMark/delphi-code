@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from delphi_code.cli import arguments, execute
-from delphi_code.model import Failure
+from delphi_code.errors import Failure
 from delphi_code.picker import TrackingChanges
 from delphi_code.registry import Registry
 from delphi_code.hosts import Bitbucket, GitHub

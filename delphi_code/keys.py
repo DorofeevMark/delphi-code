@@ -4,7 +4,7 @@ import re
 import subprocess
 from urllib.parse import urlsplit
 
-from .model import Failure
+from .errors import ExitCode, Failure
 
 SCP_STYLE_REMOTE = re.compile(r"^(?:[^@/]+@)?([^:/]+):(?!//)(.+)$")
 HOSTNAME = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)*")
@@ -63,5 +63,5 @@ def match_key(name, candidates):
     else:
         matches = {candidate for candidate, project in candidates if names_key(name, candidate, project)}
     if len(matches) > 1:
-        raise Failure("project_ambiguous", f"Multiple projects match {name}: {', '.join(sorted(matches))}. Use a longer key or an explicit path.", 2)
+        raise Failure("project_ambiguous", f"Multiple projects match {name}: {', '.join(sorted(matches))}. Use a longer key or an explicit path.", ExitCode.USAGE)
     return matches.pop() if matches else None

@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from delphi_code.model import Failure
+from delphi_code.errors import ExitCode, Failure
 from delphi_code.paths import data_directory
 from delphi_code.setup import download, provision, verify_assets
 
@@ -50,7 +50,7 @@ class Setup(unittest.TestCase):
         self.assertEqual((destination / "model.safetensors").read_bytes(), b"corrupt")
 
     def test_failed_diagnostics_does_not_publish(self):
-        with patch("delphi_code.setup.diagnose", side_effect=Failure("broken", "diagnostic failed")):
+        with patch("delphi_code.setup.diagnose", side_effect=Failure("broken", "diagnostic failed", ExitCode.OPERATION)):
             with self.assertRaises(Failure):
                 provision(self.args)
         self.assertFalse(Path(self.args.model).exists())

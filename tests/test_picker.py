@@ -16,7 +16,7 @@ from prompt_toolkit.output import DummyOutput
 
 from delphi_code import hosts
 from delphi_code.hosts import Bitbucket, GitHub, Owner, Repository, configured_hosts
-from delphi_code.model import Failure
+from delphi_code.errors import Failure
 from delphi_code.picker import RepositoryPicker, TrackingChanges
 
 CREDENTIAL_VARIABLES = ("BITBUCKET_USERNAME", "BITBUCKET_APP_PASSWORD", "BITBUCKET_EMAIL", "GITHUB_TOKEN", "GH_TOKEN")

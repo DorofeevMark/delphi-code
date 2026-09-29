@@ -8,7 +8,8 @@ from cocoindex.ops.text import RecursiveSplitter
 from cocoindex.resources.id import IdGenerator
 from cocoindex.resources.schema import VectorSchema
 
-from .model import Failure, embed
+from .errors import ExitCode, Failure
+from .model import embed
 
 MODEL = coco.ContextKey("local_model")
 DATABASE = coco.ContextKey("vector_database")
@@ -70,7 +71,7 @@ def storage_environment(state, provider=None):
         return coco.Environment(coco.Settings(db_path=state / "incremental"), context_provider=provider)
     except RuntimeError as exc:
         if "Operation not permitted" in str(exc):
-            raise Failure("sandbox_storage_denied", "Sandbox denied CocoIndex storage initialization; use a sandbox allowing its native storage operations while keeping network access denied", 3) from exc
+            raise Failure("sandbox_storage_denied", "Sandbox denied CocoIndex storage initialization; use a sandbox allowing its native storage operations while keeping network access denied", ExitCode.RUNTIME_ASSETS) from exc
         raise
 
 

@@ -8,7 +8,7 @@ from pathlib import Path
 import tomllib
 
 from .keys import local_key
-from .model import Failure
+from .errors import ExitCode, Failure
 from .paths import registry_path
 from .sources import LocalSource, source_from_registry
 
@@ -76,11 +76,11 @@ class Registry:
         except FileNotFoundError:
             return []
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-            raise Failure("registry_invalid", f"Cannot read {self.path}: {exc}", 2) from exc
+            raise Failure("registry_invalid", f"Cannot read {self.path}: {exc}", ExitCode.USAGE) from exc
         tables = data.get("repo", [])
         entries = [Entry.from_toml(table) for table in tables] if isinstance(tables, list) else [None]
         if set(data) - {"repo"} or None in entries:
-            raise Failure("registry_invalid", f"{self.path}: expected [[repo]] tables with a source (an absolute path, bitbucket.org/workspace/repository, or github.com/owner/repository), optional key and ref strings, optional string lists paths, languages and ignores, and a positive integer max_bytes", 2)
+            raise Failure("registry_invalid", f"{self.path}: expected [[repo]] tables with a source (an absolute path, bitbucket.org/workspace/repository, or github.com/owner/repository), optional key and ref strings, optional string lists paths, languages and ignores, and a positive integer max_bytes", ExitCode.USAGE)
         return entries
 
     @contextmanager

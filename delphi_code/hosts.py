@@ -13,7 +13,7 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 if __package__:
-    from .model import Failure
+    from .errors import ExitCode, Failure
 
 PAGE_LENGTH = 100
 REQUEST_TIMEOUT_SECONDS = 60
@@ -101,7 +101,7 @@ class RepositoryHost:
     def _api_authorization(self):
         authorization = self._available_api_authorization
         if not authorization:
-            raise Failure("remote_auth_missing", f"Listing {self.name} repositories needs credentials: {self.credentials_hint}", 3)
+            raise Failure("remote_auth_missing", f"Listing {self.name} repositories needs credentials: {self.credentials_hint}", ExitCode.RUNTIME_ASSETS)
         return authorization
 
     def _repository(self, owner, slug, description, private):
@@ -127,7 +127,7 @@ class RepositoryHost:
             result = subprocess.run([sys.executable, __file__, self.domain, listing, *arguments], capture_output=True, text=True,
                                     timeout=LISTING_TIMEOUT_SECONDS, env=environment)
         except subprocess.TimeoutExpired as exc:
-            raise Failure("remote_unavailable", f"{self.name} did not answer within {LISTING_TIMEOUT_SECONDS} seconds", 5) from exc
+            raise Failure("remote_unavailable", f"{self.name} did not answer within {LISTING_TIMEOUT_SECONDS} seconds", ExitCode.OPERATION) from exc
         try:
             payload = json.loads(result.stdout)
         except ValueError:
@@ -136,8 +136,8 @@ class RepositoryHost:
             return payload
         error = payload.get("error", {})
         if error.get("status") in (401, 403):
-            raise Failure("remote_auth_failed", f"{self.name} refused the credentials: {error['message']}. {self.rejected_credentials_hint or self.credentials_hint}", 5)
-        raise Failure("remote_unavailable", f"{self.name} API request failed: {error.get('message')}", 5)
+            raise Failure("remote_auth_failed", f"{self.name} refused the credentials: {error['message']}. {self.rejected_credentials_hint or self.credentials_hint}", ExitCode.OPERATION)
+        raise Failure("remote_unavailable", f"{self.name} API request failed: {error.get('message')}", ExitCode.OPERATION)
 
 
 class Bitbucket(RepositoryHost):
