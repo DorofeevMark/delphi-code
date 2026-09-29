@@ -24,10 +24,12 @@ networkx==3.7
 numpy==2.5.3
 packaging==26.3
 pathspec==0.12.1
+prompt-toolkit==3.0.53
 psutil==7.2.2
 Pygments==2.21.0
 python-dotenv==1.2.3
 PyYAML==6.0.3
+questionary==2.1.1
 regex==2026.9.10
 rich==15.0.0
 safetensors==0.8.0
@@ -46,3 +48,4 @@ transformers==5.17.0
 typer==0.27.2
 typing_extensions==4.16.0
 watchdog==6.0.0
+wcwidth==0.9.1

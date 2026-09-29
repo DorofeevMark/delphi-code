@@ -129,11 +129,23 @@ delphi-code add git@bitbucket.org:acme/billing.git --ref release
 - `sync` asks Bitbucket for the latest commit of the branch or tag, which is the default branch unless `--ref` names another. It skips the repository when the index already holds that commit with the same filters and model. Otherwise it makes a shallow clone into a temporary directory, indexes it, and deletes the clone. Unchanged files are not embedded again.
 - Search results from these repositories carry a `url`: a Bitbucket link to the indexed commit and line range. The response also includes `ref` and `commit`, and `project` is `null`.
 - Use `sync`, not `index`, to update them.
-- Only `add` and `sync` touch the network, through `git` subprocesses. `index`, `search`, `status`, and `list` stay offline.
+- Only `add` and `sync` touch the network. `index`, `search`, `status`, and `list` stay offline.
 
-**Credentials.** If `BITBUCKET_USERNAME` and `BITBUCKET_APP_PASSWORD` are set, git receives them through `GIT_ASKPASS`, never in URLs or arguments, and they take precedence over configured git credentials. Otherwise git uses its own credentials, such as a credential helper. Git never prompts. Bitbucket has replaced app passwords with API tokens; an API token also works in `BITBUCKET_APP_PASSWORD`, with the username that Bitbucket shows for git over HTTPS.
+**Picking repositories.** Run `add` without sources in a terminal to choose from the repositories your account can see:
 
-`DELPHI_CODE_BITBUCKET_GIT_BASE` sends clones to another base URL, such as a mirror, instead of `https://bitbucket.org`. Result links still point to bitbucket.org.
+```sh
+delphi-code add
+```
+
+Choose a workspace (skipped when you have only one), then check repositories in a list you can filter by typing. Repositories you already track start checked, so unchecking one stops tracking it and deletes its index. After you confirm, the new repositories are indexed. Filter options and `--ref` apply to the repositories you add. The prompts are drawn on stderr, and stdout still receives one JSON object with the added repositories under `repos` and the untracked ones under `removed`. Cancelling changes nothing and reports `"cancelled": true`. Without a terminal, `add` requires sources.
+
+**Credentials.**
+
+- Cloning: if `BITBUCKET_USERNAME` and `BITBUCKET_APP_PASSWORD` are set, git receives them through `GIT_ASKPASS`, never in URLs or arguments, and they take precedence over configured git credentials. Otherwise git uses its own credentials, such as a credential helper. Git never prompts.
+- Listing repositories for the picker uses the Bitbucket REST API with the same variables. Without them, it asks git for the credentials it has stored for bitbucket.org (`git credential fill`). The API requests run in a separate process, like the model download in `setup`, so the main process keeps its network guard.
+- Bitbucket has replaced app passwords with API tokens. An API token also works in `BITBUCKET_APP_PASSWORD`. Git over HTTPS takes the username that Bitbucket shows for it, and the REST API takes your Atlassian account email: set that in `BITBUCKET_EMAIL`, which the picker uses instead of `BITBUCKET_USERNAME`.
+
+`DELPHI_CODE_BITBUCKET_GIT_BASE` sends clones to another base URL, such as a mirror, instead of `https://bitbucket.org`, and `DELPHI_CODE_BITBUCKET_API_BASE` does the same for the API. Result links still point to bitbucket.org.
 
 ### Searching across projects
 

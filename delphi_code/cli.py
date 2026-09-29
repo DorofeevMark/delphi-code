@@ -51,7 +51,7 @@ def arguments():
             command.add_argument("query")
             command.add_argument("--limit", type=int, default=10)
     add = commands.add_parser("add", help="Track projects in the registry and index them")
-    add.add_argument("sources", nargs="+", metavar="SOURCE", help="Project directory, or bitbucket.org/workspace/repository")
+    add.add_argument("sources", nargs="*", metavar="SOURCE", help="Project directory, or bitbucket.org/workspace/repository; omit to pick Bitbucket repositories interactively")
     add.add_argument("--ref", help="Branch or tag of remote repositories; defaults to the default branch")
     selection_options(add, True)
     model_option(add)
@@ -206,46 +206,82 @@ def manage(args, store, registry):
                          "ready": info.get("ready", False), "indexed_at": info.get("indexed_at"), **revision_fields(info)})
         return {"registry": str(registry.path), "repos": rows}
     if args.command == "remove":
-        with registry.edit() as entries:
-            keys = [entry.current_key() for entry in entries]
-            indexes = store.all()
-            key = match_key(args.name, [*((key, entry.local_directory) for key, entry in zip(keys, entries)),
-                                     *((index.key, index.project) for index in indexes)])
-            if key is None:
-                raise Failure("project_missing", f"No tracked project or index matches {args.name}", 2)
-            untracked = key in keys
-            entries[:] = [entry for candidate, entry in zip(keys, entries) if candidate != key]
-            index = None if args.keep_index else next((index for index in indexes if index.key == key), None)
-            if index:
-                store.delete(index)
-        return {"key": key, "untracked": untracked, "deleted_index": str(index.directory) if index else None}
+        return remove_project(args, store, registry)
+    if args.command == "add" and args.max_bytes < 1:
+        raise Failure("usage", "--max-bytes must be positive", 2)
+    if args.command == "add" and not args.sources:
+        return add_picked_repositories(args, store, registry)
     if args.command == "add":
-        if args.max_bytes < 1:
-            raise Failure("usage", "--max-bytes must be positive", 2)
-        added = []
-        selection = FileSelection(args.path, args.language, args.ignore, args.max_bytes)
-        with registry.edit() as entries:
-            keys = [entry.current_key() for entry in entries]
-            for raw in args.sources:
-                origin = source_from_argument(raw)
-                if isinstance(origin, LocalSource):
-                    if not origin.path.is_dir():
-                        raise Failure("project_missing", f"Project directory does not exist: {origin.path}", 2)
-                    if args.ref:
-                        raise Failure("usage", f"--ref applies only to remote repositories, not {origin.path}", 2)
-                    entry = Entry(str(origin.path), origin.key, selection)
-                else:
-                    entry = Entry(origin.key, selection=selection, ref=args.ref)
-                if entry.current_key() in keys:
-                    entries[keys.index(entry.current_key())] = entry
-                else:
-                    entries.append(entry)
-                    keys.append(entry.current_key())
-                added.append(entry)
-        if args.no_sync:
-            return {"registry": str(registry.path), "repos": [{"source": entry.source, "key": entry.current_key()} for entry in added]}
-        return sync(added, args.model, store, registry)
+        return add_sources(args, store, registry)
     return sync(registry.entries(), args.model, store, registry)
+
+
+def remove_project(args, store, registry):
+    with registry.edit() as entries:
+        keys = [entry.current_key() for entry in entries]
+        key = match_key(args.name, [*((key, entry.local_directory) for key, entry in zip(keys, entries)),
+                                    *((index.key, index.project) for index in store.all())])
+        if key is None:
+            raise Failure("project_missing", f"No tracked project or index matches {args.name}", 2)
+        untracked = key in keys
+        entries[:] = [entry for candidate, entry in zip(keys, entries) if candidate != key]
+        deleted = None if args.keep_index else delete_index(store, key)
+    return {"key": key, "untracked": untracked, "deleted_index": deleted}
+
+
+def delete_index(store, key):
+    index = store.get(key)
+    if index is None:
+        return None
+    store.delete(index)
+    return str(index.directory)
+
+
+def add_sources(args, store, registry):
+    added = []
+    selection = FileSelection(args.path, args.language, args.ignore, args.max_bytes)
+    with registry.edit() as entries:
+        keys = [entry.current_key() for entry in entries]
+        for raw in args.sources:
+            origin = source_from_argument(raw)
+            if isinstance(origin, LocalSource):
+                if not origin.path.is_dir():
+                    raise Failure("project_missing", f"Project directory does not exist: {origin.path}", 2)
+                if args.ref:
+                    raise Failure("usage", f"--ref applies only to remote repositories, not {origin.path}", 2)
+                entry = Entry(str(origin.path), origin.key, selection)
+            else:
+                entry = Entry(origin.key, selection=selection, ref=args.ref)
+            if entry.current_key() in keys:
+                entries[keys.index(entry.current_key())] = entry
+            else:
+                entries.append(entry)
+                keys.append(entry.current_key())
+            added.append(entry)
+    if args.no_sync:
+        return {"registry": str(registry.path), "repos": [{"source": entry.source, "key": entry.current_key()} for entry in added]}
+    return sync(added, args.model, store, registry)
+
+
+def add_picked_repositories(args, store, registry):
+    from .picker import RepositoryPicker
+
+    tracked = {entry.current_key() for entry in registry.entries()}
+    changes = RepositoryPicker().choose(tracked)
+    if changes is None:
+        return {"registry": str(registry.path), "cancelled": True, "repos": [], "removed": []}
+    selection = FileSelection(args.path, args.language, args.ignore, args.max_bytes)
+    added = [Entry(key, selection=selection, ref=args.ref) for key in changes.added]
+    with registry.edit() as entries:
+        entries[:] = [entry for entry in entries if entry.current_key() not in changes.removed] + added
+    removed = [{"key": key, "deleted_index": delete_index(store, key)} for key in changes.removed]
+    if args.no_sync:
+        return {"registry": str(registry.path), "cancelled": False, "repos": [{"source": entry.source, "key": entry.current_key()} for entry in added], "removed": removed}
+    try:
+        return {**sync(added, args.model, store, registry), "cancelled": False, "removed": removed}
+    except Failure as failure:
+        failure.data.update(cancelled=False, removed=removed)
+        raise
 
 
 def sync(entries, model, store, registry):

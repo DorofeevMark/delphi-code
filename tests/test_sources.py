@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from delphi_code.cli import arguments, execute
 from delphi_code.model import Failure
+from delphi_code.picker import TrackingChanges
 from delphi_code.registry import Registry
 from delphi_code.sources import BitbucketSource, LocalSource, source_from_registry, source_from_argument
 from delphi_code.store import Store
@@ -124,7 +125,7 @@ class RemoteSync(LocalBitbucketWithApiRepository):
             index = store.get_or_create(checkout.provenance["key"], checkout.project)
             index.write_manifest({"schema_version": 2, "project": None, "source": checkout.provenance, "ready": True,
                          "model_sha256": identity, **vars(options)})
-            return {"project": None, "key": index.key, "index_directory": str(index.directory), "commit": checkout.provenance["commit"]}
+            return {"project": None, "key": index.key, "index_directory": str(index.directory), "commit": checkout.provenance.get("commit")}
 
         self.enterContext(patch("delphi_code.cli.index_project", side_effect=index_project))
 
@@ -164,3 +165,33 @@ class RemoteSync(LocalBitbucketWithApiRepository):
         self.assertEqual((row["key"], row["tracked"], row["project"], row["ref"]), ("bitbucket.org/acme/api", True, None, "main"))
         self.run_command("remove", "acme/api")
         self.assertEqual((Registry().entries(), Store().all()), ([], []))
+
+    def pick(self, changes):
+        picker = self.enterContext(patch("delphi_code.picker.RepositoryPicker"))
+        picker.return_value.choose.return_value = changes
+        return picker.return_value.choose
+
+    def test_add_without_sources_needs_a_terminal(self):
+        with patch.object(sys.stdin, "isatty", return_value=False), self.assertRaises(Failure) as raised:
+            self.run_command("add")
+        self.assertEqual(raised.exception.code, "usage")
+
+    def test_picked_repositories_are_tracked_indexed_and_untracked(self):
+        self.run_command("add", str(self.work))
+        picker = self.pick(TrackingChanges(["bitbucket.org/acme/api"], []))
+        added = self.run_command("add", "--path", "src/*")
+        self.assertEqual(picker.call_args.args[0], {f"local:{self.work}"})
+        self.assertEqual(([repo["key"] for repo in added["repos"]], added["removed"], added["cancelled"]), (["bitbucket.org/acme/api"], [], False))
+        self.assertEqual([(entry.source, entry.selection.paths) for entry in Registry().entries()],
+                         [(str(self.work), []), ("bitbucket.org/acme/api", ["src/*"])])
+        index_directory = Store().get("bitbucket.org/acme/api").directory
+        picker.return_value = TrackingChanges([], ["bitbucket.org/acme/api"])
+        removed = self.run_command("add")
+        self.assertEqual(removed["removed"], [{"key": "bitbucket.org/acme/api", "deleted_index": str(index_directory)}])
+        self.assertEqual([entry.source for entry in Registry().entries()], [str(self.work)])
+        self.assertFalse(index_directory.exists())
+
+    def test_cancelled_pick_changes_nothing(self):
+        self.pick(None)
+        self.assertEqual(self.run_command("add")["cancelled"], True)
+        self.assertEqual(Registry().entries(), [])
