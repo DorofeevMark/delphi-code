@@ -10,8 +10,10 @@ from unittest.mock import patch
 import numpy as np
 import sqlite_vec
 
-from delphi_code.cli import arguments, execute, index_directory
+from delphi_code.cli import arguments, execute
 from delphi_code.model import Failure
+from delphi_code.keys import local_key
+from delphi_code.store import Store
 
 
 class CrossProjectSearch(unittest.TestCase):
@@ -27,10 +29,9 @@ class CrossProjectSearch(unittest.TestCase):
     def register(self, name, rows, **updates):
         project = self.root / name
         project.mkdir()
-        state = index_directory(project)
-        state.mkdir(parents=True)
+        state = Store().create(local_key(project), project).directory
         (state / "lock").touch()
-        info = dict(schema_version=1, project=str(project), ready=True, model_sha256="same-model")
+        info = dict(schema_version=2, project=str(project), source={"key": local_key(project)}, ready=True, model_sha256="same-model")
         info.update(updates)
         (state / "manifest.json").write_text(json.dumps(info))
         db = sqlite3.connect(state / "vectors.sqlite")

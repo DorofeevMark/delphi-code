@@ -11,10 +11,11 @@ def incidental(relative):
 
 
 class Failure(Exception):
-    def __init__(self, code, message, exit_code=3):
+    def __init__(self, code, message, exit_code=3, data=None):
         super().__init__(message)
         self.code = code
         self.exit_code = exit_code
+        self.data = data
 
 
 def inspect_model(value):

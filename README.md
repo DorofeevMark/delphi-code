@@ -78,14 +78,40 @@ delphi-code status -p /path/to/project
 - **`status`** reports stored index state. It needs no model and does not rescan source files to detect staleness.
 - **`doctor`** checks the model, SQLite extensions, and native storage, then runs a real local embedding and vector distance calculation.
 - **`setup`** provisions the model (see above).
+- **`add`**, **`sync`**, **`list`**, and **`remove`** manage tracked projects (see below).
 
 `python -m delphi_code` works as an alternative to the `delphi-code` executable.
 
 ### Selecting a project
 
 - `--project` / `-p` accepts a path, resolved relative to the current working directory. The project root is explicit; it is not inferred from Git.
-- After a project has been indexed once, its folder name works too, for example `delphi-code search -p myapp 'parse config'`. A bare name selects the uniquely matching indexed project; duplicate names produce an error listing their paths. Use `./name` or an absolute path to select a directory explicitly.
+- After a project has been indexed once, its key or folder name works too, for example `delphi-code search -p acme/api 'parse config'` or `-p myapp`. A key matches in full or by a trailing part (`bitbucket.org/acme/api`, `acme/api`, or `api`). A name that matches several indexes produces an error listing their keys. Use `./name` or an absolute path to select a directory explicitly.
 - Without `--project`, `search` searches all stored indexes; other commands use the current directory.
+
+### Tracking projects
+
+Instead of indexing projects one by one, keep a list of them and update them all together:
+
+```sh
+delphi-code add ~/src/api ~/src/web --path 'src/*'
+delphi-code sync
+delphi-code list
+delphi-code remove api
+```
+
+- **`add`** records projects and indexes them; `--no-sync` only records them. Filter options are stored with each project, and adding a project again replaces its options.
+- **`sync`** indexes every tracked project. One failing project does not stop the rest: the command then exits with `sync_failed` (code 5) and still reports each project's result under `data`.
+- **`list`** shows tracked projects and every stored index, including ones created with plain `index`. It needs no model.
+- **`remove`** stops tracking a project and deletes its index; `--keep-index` keeps the index.
+
+The list lives in `repos.toml` in the storage directory (`DELPHI_CODE_REGISTRY` overrides the location). You can edit it by hand; `add` and `remove` rewrite it without comments.
+
+```toml
+[[repo]]
+source = "/Users/me/src/api"
+key = "bitbucket.org/acme/api"
+paths = ["src/*"]
+```
 
 ### Searching across projects
 
@@ -176,11 +202,18 @@ Models and indexes live outside the installation, so reinstalling or upgrading l
 
 The default model is under `models/all-MiniLM-L6-v2/` and indexes are under `indexes/`. `DELPHI_CODE_INDEX_ROOT` overrides the index location.
 
-Each project has one index at `indexes/<sha256 of the resolved project path>/`, independent of the working directory. It holds CocoIndex's incremental state, the SQLite vector table, and a manifest recording the project path; command output includes this `index_directory`.
+Each project has one index in `indexes/<id>/`, where the id is random. The index holds CocoIndex's incremental state, the SQLite vector table, and a manifest recording the project's key and its last indexed path. Command output includes this `index_directory` and the `key`.
+
+A project's key decides which index it uses:
+
+- The root of a Git repository with an `origin` remote is keyed by that remote, normalized to `host/owner/repo`. `git@bitbucket.org:acme/api.git` and `https://bitbucket.org/acme/api` both become `bitbucket.org/acme/api`. Moving or re-cloning the repository keeps its index, and unchanged files are not embedded again.
+- Any other directory, including a subdirectory of a repository, is keyed by its resolved path: `local:/path/to/project`.
+- Indexes created by earlier versions are given a key when they are first seen, without being rebuilt. If another index already has that remote key, the older index keeps a path key.
 
 - A file lock prevents reads during updates and concurrent writers.
 - An interrupted or failed update leaves the index marked `ready: false`, and search refuses it until indexing succeeds. There is no fallback to a last good snapshot.
-- Moving a project changes its index identity.
+- Two checkouts of the same repository share one index, which holds whichever of them was indexed last. Select a subdirectory to keep them apart.
+- Moving a project that has no Git remote changes its key, and indexing it again builds a new index.
 - To switch model assets or rebuild incompatible state, move that `index_directory` aside and run `index` again.
 
 ## Offline guarantees

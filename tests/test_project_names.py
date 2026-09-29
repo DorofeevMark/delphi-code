@@ -1,12 +1,10 @@
-import json
-import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
 
-from delphi_code.cli import index_directory, resolve_project
+from delphi_code.keys import local_key
 from delphi_code.model import Failure
+from delphi_code.store import Store
 
 
 class ProjectNames(unittest.TestCase):
@@ -14,41 +12,46 @@ class ProjectNames(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
-        self.environment = patch.dict(os.environ, {"DELPHI_CODE_INDEX_ROOT": str(self.root / "indexes")})
-        self.environment.start()
-        self.addCleanup(self.environment.stop)
+        self.store = Store(self.root / "indexes")
 
-    def register(self, relative):
+    def register(self, relative, key=None):
         project = self.root / relative
         project.mkdir(parents=True)
-        state = index_directory(project)
-        state.mkdir(parents=True)
-        (state / "manifest.json").write_text(json.dumps({"project": str(project)}))
-        return project
+        return project, self.store.create(key or local_key(project), project)
+
+    def resolve(self, value):
+        project, key, index = self.store.resolve(value)
+        return project, key, index and index.directory
 
     def test_unique_name(self):
-        project = self.register("one/flixbeton")
-        self.assertEqual(resolve_project("flixbeton"), project)
+        project, index = self.register("one/flixbeton")
+        self.assertEqual(self.resolve("flixbeton"), (project, local_key(project), index.directory))
+
+    def test_remote_keys_and_suffixes(self):
+        project, index = self.register("checkout", "bitbucket.org/acme/api")
+        for name in ("bitbucket.org/acme/api", "acme/api", "api", "git@bitbucket.org:acme/api.git", "checkout"):
+            self.assertEqual(self.resolve(name), (project, "bitbucket.org/acme/api", index.directory), name)
 
     def test_duplicate_names_require_path(self):
-        first = self.register("one/flixbeton")
-        second = self.register("two/flixbeton")
+        first, _ = self.register("one/flixbeton")
+        second, _ = self.register("two/flixbeton")
         with self.assertRaises(Failure) as raised:
-            resolve_project("flixbeton")
+            self.resolve("flixbeton")
         self.assertEqual(raised.exception.code, "project_ambiguous")
         self.assertIn(str(first), str(raised.exception))
         self.assertIn(str(second), str(raised.exception))
-        self.assertEqual(resolve_project(str(first)), first)
-        self.assertEqual(resolve_project("./flixbeton"), Path("flixbeton").resolve())
+        self.assertEqual(self.resolve(str(first))[0], first)
+        self.assertEqual(self.resolve("./flixbeton")[0], Path("flixbeton").resolve())
 
     def test_unindexed_paths_still_work(self):
-        self.assertEqual(resolve_project("unindexed"), Path("unindexed").resolve())
-        self.assertEqual(resolve_project("."), Path.cwd())
+        self.assertEqual(self.resolve("unindexed")[:2], (Path("unindexed").resolve(), local_key(Path("unindexed").resolve())))
+        self.assertIsNone(self.resolve("unindexed")[2])
+        self.assertEqual(self.resolve(".")[0], Path.cwd())
 
     def test_invalid_manifests_do_not_break_lookup(self):
-        project = self.register("one/flixbeton")
+        project, _ = self.register("one/flixbeton")
         invalid = self.root / "indexes/invalid"
         invalid.mkdir()
-        for content in ("{", "null", '{"project": 42}', '{"project": "/incorrect/flixbeton"}'):
+        for content in ("{", "null", '{"project": 42}', '{"source": {"key": 7}}', '{"schema_version": 1, "project": "relative"}'):
             (invalid / "manifest.json").write_text(content)
-            self.assertEqual(resolve_project("flixbeton"), project)
+            self.assertEqual(self.resolve("flixbeton")[0], project)

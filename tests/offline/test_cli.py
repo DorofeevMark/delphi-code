@@ -1,5 +1,4 @@
 import json
-import hashlib
 import fcntl
 import os
 from pathlib import Path
@@ -21,7 +20,6 @@ class OfflineCLI(unittest.TestCase):
         cls.project = cls.base / "project"
         cls.project.mkdir()
         cls.index_root = cls.base / "indexes"
-        cls.state = cls.index_root / hashlib.sha256(os.fsencode(cls.project.resolve())).hexdigest()
         cls.audit = cls.base / "audit"
         cls.audit.mkdir()
         (cls.audit / "sitecustomize.py").write_text(
@@ -36,26 +34,26 @@ class OfflineCLI(unittest.TestCase):
         )
         cls.network_log = cls.base / "network.log"
         cls.env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(cls.audit), str(ROOT)]),
-                       DELPHI_CODE_INDEX_ROOT=str(cls.index_root), HF_HOME=str(cls.base / "empty-hf-cache"), DELPHI_CODE_NETWORK_LOG=str(cls.network_log),
+                       DELPHI_CODE_INDEX_ROOT=str(cls.index_root), DELPHI_CODE_REGISTRY=str(cls.base / "repos.toml"), HF_HOME=str(cls.base / "empty-hf-cache"), DELPHI_CODE_NETWORK_LOG=str(cls.network_log),
                        COCOINDEX_DISABLE_USAGE_TRACKING="0", HF_HUB_OFFLINE="0", HF_HUB_DISABLE_TELEMETRY="0")
 
     @classmethod
     def tearDownClass(cls):
         cls.workspace.cleanup()
 
-    def invoke(self, *args, code=0, model=MODEL, project=True):
+    def invoke(self, *args, code=0, model=MODEL, project=True, env=None):
         command = [sys.executable, "-m", "delphi_code", *args]
         if project:
             command.extend(["--project", str(self.project)])
-        if args[0] != "status":
+        if args[0] not in {"status", "list", "remove"}:
             command.extend(["--model", str(model)])
-        result = subprocess.run(command, env=self.env, text=True, capture_output=True, timeout=120)
+        result = subprocess.run(command, env=env or self.env, text=True, capture_output=True, timeout=120)
         self.assertEqual(result.returncode, code, result.stderr + result.stdout)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["schema_version"], 1)
         self.assertEqual(payload["ok"], code == 0)
         self.assertFalse(self.network_log.exists(), self.network_log.read_text() if self.network_log.exists() else "")
-        return payload.get("data", payload.get("error"))
+        return payload["data"] if code == 0 else payload["error"]
 
     def test_setup_import_and_reuse(self):
         destination = self.base / "provisioned-model"
@@ -90,7 +88,9 @@ class OfflineCLI(unittest.TestCase):
         (self.project / "linked.py").symlink_to(self.project / "auth.py")
         initial = self.invoke("index")
         self.assertGreaterEqual(initial["files"], 3)
-        self.assertEqual(initial["index_directory"], str(self.state))
+        self.state = Path(initial["index_directory"])
+        self.assertEqual(self.state.parent, self.index_root)
+        self.assertEqual(initial["key"], f"local:{self.project}")
         self.assertFalse((self.project / ".delphi-code").exists())
         results = self.invoke("search", "verify user password", "--language", "python", "--limit", "1")["results"]
         self.assertEqual(results[0]["path"], "auth.py")
@@ -139,6 +139,30 @@ class OfflineCLI(unittest.TestCase):
         self.invoke("search", "token", "--limit", "0", code=2)
         self.invoke("index", "--language", "python", "--ignore", "auth.py")
         self.assertEqual(self.invoke("search", "token")["results"], [])
+
+    def test_registry_workflow(self):
+        env = dict(self.env, DELPHI_CODE_INDEX_ROOT=str(self.base / "registry-indexes"))
+        invoke = lambda *args, code=0: self.invoke(*args, code=code, project=False, env=env)
+        project = self.base / "tracked"
+        project.mkdir()
+        (project / "parse.py").write_text("def parse_configuration(text):\n    return dict(line.split('=') for line in text.splitlines())\n")
+        subprocess.run(["git", "init", "-q", str(project)], check=True)
+        subprocess.run(["git", "-C", str(project), "remote", "add", "origin", "git@bitbucket.org:acme/tracked.git"], check=True)
+        added = invoke("add", str(project))["repos"]
+        self.assertEqual([(repo["ok"], repo["key"]) for repo in added], [(True, "bitbucket.org/acme/tracked")])
+        results = invoke("search", "read config file", "-p", "acme/tracked")["results"]
+        self.assertEqual(results[0]["path"], "parse.py")
+        moved = self.base / "moved"
+        project.rename(moved)
+        again = invoke("index", "-p", str(moved))
+        self.assertEqual(again["index_directory"], added[0]["index_directory"])
+        self.assertEqual(again["incremental"].get("num_adds", 0), 0)
+        self.assertEqual(invoke("sync", code=5)["code"], "sync_failed")
+        rows = {row["key"]: row for row in invoke("list")["repos"]}
+        self.assertTrue(rows["bitbucket.org/acme/tracked"]["tracked"])
+        removed = invoke("remove", "tracked")
+        self.assertEqual(removed["deleted_index"], added[0]["index_directory"])
+        self.assertFalse(Path(added[0]["index_directory"]).exists())
 
 
 class NetworkSandbox(unittest.TestCase):

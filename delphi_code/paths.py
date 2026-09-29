@@ -16,3 +16,7 @@ def model_directory():
 def index_root():
     return Path(os.environ.get("DELPHI_CODE_INDEX_ROOT") or data_directory() / "indexes").expanduser().resolve()
 
+
+def registry_path():
+    return Path(os.environ.get("DELPHI_CODE_REGISTRY") or data_directory() / "repos.toml").expanduser().resolve()
+
