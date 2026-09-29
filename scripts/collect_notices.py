@@ -12,9 +12,11 @@ for distribution in sorted(distributions(), key=lambda item: item.metadata["Name
     if name == "delphi-code":
         continue
     record = {
-        "name": name, "version": distribution.version,
+        "name": name,
+        "version": distribution.version,
         "license": distribution.metadata.get("License-Expression") or distribution.metadata.get("License"),
-        "project_urls": distribution.metadata.get_all("Project-URL") or [], "files": {},
+        "project_urls": distribution.metadata.get_all("Project-URL") or [],
+        "files": {},
     }
     for file in distribution.files or []:
         if any(token in file.name.upper() for token in ("LICENSE", "NOTICE", "COPYING", "COPYRIGHT")):

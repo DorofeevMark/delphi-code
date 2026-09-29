@@ -2,7 +2,6 @@ import base64
 from functools import cached_property
 import json
 import os
-from pathlib import Path
 import re
 import ssl
 import subprocess
@@ -101,7 +100,11 @@ class RepositoryHost:
     def _api_authorization(self):
         authorization = self._available_api_authorization
         if not authorization:
-            raise Failure("remote_auth_missing", f"Listing {self.name} repositories needs credentials: {self.credentials_hint}", ExitCode.RUNTIME_ASSETS)
+            raise Failure(
+                "remote_auth_missing",
+                f"Listing {self.name} repositories needs credentials: {self.credentials_hint}",
+                ExitCode.RUNTIME_ASSETS,
+            )
         return authorization
 
     def _repository(self, owner, slug, description, private):
@@ -116,7 +119,11 @@ class RepositoryHost:
         return values
 
     def _fetch_json(self, url):
-        headers = {"Authorization": self._given_api_authorization, "Accept": "application/json", "User-Agent": "delphi-code"}
+        headers = {
+            "Authorization": self._given_api_authorization,
+            "Accept": "application/json",
+            "User-Agent": "delphi-code",
+        }
         tls = _verified_tls() if url.startswith("https:") else None
         with urlopen(Request(url, headers=headers), timeout=REQUEST_TIMEOUT_SECONDS, context=tls) as response:
             return json.load(response), (response.headers.get("Link") if response.headers else None) or ""
@@ -124,10 +131,19 @@ class RepositoryHost:
     def _list_in_child_process(self, listing, *arguments):
         environment = dict(os.environ, DELPHI_CODE_API_AUTHORIZATION=self._api_authorization)
         try:
-            result = subprocess.run([sys.executable, __file__, self.domain, listing, *arguments], capture_output=True, text=True,
-                                    timeout=LISTING_TIMEOUT_SECONDS, env=environment)
+            result = subprocess.run(
+                [sys.executable, __file__, self.domain, listing, *arguments],
+                capture_output=True,
+                text=True,
+                timeout=LISTING_TIMEOUT_SECONDS,
+                env=environment,
+            )
         except subprocess.TimeoutExpired as exc:
-            raise Failure("remote_unavailable", f"{self.name} did not answer within {LISTING_TIMEOUT_SECONDS} seconds", ExitCode.OPERATION) from exc
+            raise Failure(
+                "remote_unavailable",
+                f"{self.name} did not answer within {LISTING_TIMEOUT_SECONDS} seconds",
+                ExitCode.OPERATION,
+            ) from exc
         try:
             payload = json.loads(result.stdout)
         except ValueError:
@@ -136,8 +152,14 @@ class RepositoryHost:
             return payload
         error = payload.get("error", {})
         if error.get("status") in (401, 403):
-            raise Failure("remote_auth_failed", f"{self.name} refused the credentials: {error['message']}. {self.rejected_credentials_hint or self.credentials_hint}", ExitCode.OPERATION)
-        raise Failure("remote_unavailable", f"{self.name} API request failed: {error.get('message')}", ExitCode.OPERATION)
+            raise Failure(
+                "remote_auth_failed",
+                f"{self.name} refused the credentials: {error['message']}. {self.rejected_credentials_hint or self.credentials_hint}",
+                ExitCode.OPERATION,
+            )
+        raise Failure(
+            "remote_unavailable", f"{self.name} API request failed: {error.get('message')}", ExitCode.OPERATION
+        )
 
 
 class Bitbucket(RepositoryHost):
@@ -187,8 +209,10 @@ class Bitbucket(RepositoryHost):
         return [Owner(slug, name) for slug, name in sorted(names_by_slug.items())]
 
     def _list_repositories(self, workspace):
-        return [self._repository(workspace, item["slug"], item.get("description"), item.get("is_private"))
-                for item in self._fetch_pages(self._repositories_url(workspace))]
+        return [
+            self._repository(workspace, item["slug"], item.get("description"), item.get("is_private"))
+            for item in self._fetch_pages(self._repositories_url(workspace))
+        ]
 
     def _next_page_url(self, page, link_header):
         return page.get("next")
@@ -231,12 +255,16 @@ class GitHub(RepositoryHost):
         return [Repository(**item) for item in self._list_in_child_process("repositories")]
 
     def _repositories_url(self):
-        query = urlencode({"per_page": PAGE_LENGTH, "sort": "full_name", "affiliation": "owner,collaborator,organization_member"})
+        query = urlencode(
+            {"per_page": PAGE_LENGTH, "sort": "full_name", "affiliation": "owner,collaborator,organization_member"}
+        )
         return f"{self._api_base}/user/repos?{query}"
 
     def _list_repositories(self, owner=None):
-        repositories = [self._repository(item["owner"]["login"], item["name"], item.get("description"), item.get("private"))
-                        for item in self._fetch_pages(self._repositories_url())]
+        repositories = [
+            self._repository(item["owner"]["login"], item["name"], item.get("description"), item.get("private"))
+            for item in self._fetch_pages(self._repositories_url())
+        ]
         return [repository for repository in repositories if owner in (None, repository.owner)]
 
     def _next_page_url(self, page, link_header):
@@ -267,7 +295,9 @@ def _verified_tls():
 
 def _gh_token(domain):
     try:
-        result = subprocess.run(["gh", "auth", "token", "--hostname", domain], capture_output=True, text=True, timeout=10)
+        result = subprocess.run(
+            ["gh", "auth", "token", "--hostname", domain], capture_output=True, text=True, timeout=10
+        )
     except (OSError, subprocess.TimeoutExpired):
         return None
     return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else None
@@ -277,8 +307,14 @@ def _git_stored_credentials(domain):
     environment = {name: value for name, value in os.environ.items() if name not in {"GIT_ASKPASS", "SSH_ASKPASS"}}
     environment["GIT_TERMINAL_PROMPT"] = "0"
     try:
-        result = subprocess.run(["git", "credential", "fill"], input=f"protocol=https\nhost={domain}\n\n",
-                                capture_output=True, text=True, timeout=30, env=environment)
+        result = subprocess.run(
+            ["git", "credential", "fill"],
+            input=f"protocol=https\nhost={domain}\n\n",
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=environment,
+        )
     except (OSError, subprocess.TimeoutExpired):
         return None
     fields = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)

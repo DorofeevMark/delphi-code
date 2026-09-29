@@ -2,8 +2,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from delphi_code.keys import local_key
 from delphi_code.errors import Failure
+from delphi_code.keys import local_key
 from delphi_code.store import Store
 
 
@@ -44,7 +44,9 @@ class ProjectNames(unittest.TestCase):
         self.assertEqual(self.resolve("./flixbeton")[0], Path("flixbeton").resolve())
 
     def test_unindexed_paths_still_work(self):
-        self.assertEqual(self.resolve("unindexed")[:2], (Path("unindexed").resolve(), local_key(Path("unindexed").resolve())))
+        self.assertEqual(
+            self.resolve("unindexed")[:2], (Path("unindexed").resolve(), local_key(Path("unindexed").resolve()))
+        )
         self.assertIsNone(self.resolve("unindexed")[2])
         self.assertEqual(self.resolve(".")[0], Path.cwd())
 
@@ -52,6 +54,12 @@ class ProjectNames(unittest.TestCase):
         project, _ = self.register("one/flixbeton")
         invalid = self.root / "indexes/invalid"
         invalid.mkdir()
-        for content in ("{", "null", '{"project": 42}', '{"source": {"key": 7}}', '{"schema_version": 1, "project": "relative"}'):
+        for content in (
+            "{",
+            "null",
+            '{"project": 42}',
+            '{"source": {"key": 7}}',
+            '{"schema_version": 1, "project": "relative"}',
+        ):
             (invalid / "manifest.json").write_text(content)
             self.assertEqual(self.resolve("flixbeton")[0], project)

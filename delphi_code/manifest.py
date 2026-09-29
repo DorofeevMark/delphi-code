@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -23,14 +23,28 @@ class Manifest:
 
     @classmethod
     def placeholder(cls, key: str, project: Path | None) -> Manifest:
-        return cls({"schema_version": SCHEMA_VERSION, "project": _optional_str(project), "source": {"key": key}, "ready": False})
+        return cls(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "project": _optional_str(project),
+                "source": {"key": key},
+                "ready": False,
+            }
+        )
 
     @classmethod
     def for_build(cls, checkout: Checkout, selection: FileSelection, model: LocalModel) -> Manifest:
-        return cls({
-            "schema_version": SCHEMA_VERSION, "project": _optional_str(checkout.project), "source": checkout.provenance,
-            "ready": False, "model": str(model.directory), "model_sha256": model.sha256, **asdict(selection),
-        })
+        return cls(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "project": _optional_str(checkout.project),
+                "source": checkout.provenance,
+                "ready": False,
+                "model": str(model.directory),
+                "model_sha256": model.sha256,
+                **asdict(selection),
+            }
+        )
 
     @classmethod
     def read_if_valid_json(cls, path: Path) -> Manifest | None:
@@ -78,15 +92,19 @@ class Manifest:
         return self._fields.get("model_sha256") not in (None, model.sha256)
 
     def holds(self, commit: str, selection: FileSelection, model: LocalModel) -> bool:
-        return (self.ready and self._source.get("commit") == commit and self.was_built_with(model)
-                and all(self._fields.get(name) == value for name, value in asdict(selection).items()))
+        return (
+            self.ready
+            and self._source.get("commit") == commit
+            and self.was_built_with(model)
+            and all(self._fields.get(name) == value for name, value in asdict(selection).items())
+        )
 
     def web_link(self, path: str, start_line: int, end_line: int) -> str | None:
         template = self._source.get("permalink")
         return template.format(path=quote(path), start=start_line, end=end_line) if template else None
 
     def completed(self) -> Manifest:
-        return Manifest({**self._fields, "ready": True, "indexed_at": datetime.now(timezone.utc).isoformat()})
+        return Manifest({**self._fields, "ready": True, "indexed_at": datetime.now(UTC).isoformat()})
 
     def upgraded_with_key(self, key: str) -> Manifest:
         return Manifest({**self._fields, "schema_version": SCHEMA_VERSION, "source": {"key": key}})

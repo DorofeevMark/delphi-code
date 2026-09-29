@@ -19,4 +19,3 @@ def index_root():
 
 def registry_path():
     return Path(os.environ.get("DELPHI_CODE_REGISTRY") or data_directory() / "repos.toml").expanduser().resolve()
-

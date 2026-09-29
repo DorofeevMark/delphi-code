@@ -1,14 +1,14 @@
 from contextlib import contextmanager
 import copy
 from dataclasses import dataclass, field
-from functools import cached_property
 import fcntl
+from functools import cached_property
 import json
 from pathlib import Path
 import tomllib
 
-from .keys import local_key
 from .errors import ExitCode, Failure
+from .keys import local_key
 from .paths import registry_path
 from .selection import FileSelection
 from .sources import LocalSource, source_from_registry
@@ -40,22 +40,21 @@ class Entry:
 
     @classmethod
     def from_toml(cls, data):
-        is_string_list = lambda value: isinstance(value, list) and all(isinstance(item, str) for item in value)
-        valid = (isinstance(data, dict) and set(data) <= set(TOML_FIELDS)
-                 and isinstance(data.get("source"), str) and data["source"].strip()
-                 and isinstance(data.get("key", ""), str) and isinstance(data.get("ref", ""), str)
-                 and all(is_string_list(data[name]) for name in ("paths", "languages", "ignores") if name in data)
-                 and type(data.get("max_bytes", 1)) is int and data.get("max_bytes", 1) > 0)
-        if not valid or source_from_registry(data["source"]) is None:
+        if not _is_well_formed_table(data) or source_from_registry(data["source"]) is None:
             return None
-        selection = FileSelection(**{name: data[name] for name in ("paths", "languages", "ignores", "max_bytes") if name in data})
+        selection = FileSelection(
+            **{name: data[name] for name in ("paths", "languages", "ignores", "max_bytes") if name in data}
+        )
         return cls(data["source"], data.get("key"), selection, data.get("ref"))
 
     def to_toml(self):
         values = {"source": self.source, "key": self.key, "ref": self.ref, **vars(self.selection)}
         defaults = vars(FileSelection())
-        return "".join(f"{name} = {json.dumps(values[name], ensure_ascii=False)}\n"
-                       for name in TOML_FIELDS if values[name] is not None and values[name] != defaults.get(name))
+        return "".join(
+            f"{name} = {json.dumps(values[name], ensure_ascii=False)}\n"
+            for name in TOML_FIELDS
+            if values[name] is not None and values[name] != defaults.get(name)
+        )
 
 
 class Registry:
@@ -72,7 +71,11 @@ class Registry:
         tables = data.get("repo", [])
         entries = [Entry.from_toml(table) for table in tables] if isinstance(tables, list) else [None]
         if set(data) - {"repo"} or None in entries:
-            raise Failure("registry_invalid", f"{self.path}: expected [[repo]] tables with a source (an absolute path, bitbucket.org/workspace/repository, or github.com/owner/repository), optional key and ref strings, optional string lists paths, languages and ignores, and a positive integer max_bytes", ExitCode.USAGE)
+            raise Failure(
+                "registry_invalid",
+                f"{self.path}: expected [[repo]] tables with a source (an absolute path, bitbucket.org/workspace/repository, or github.com/owner/repository), optional key and ref strings, optional string lists paths, languages and ignores, and a positive integer max_bytes",
+                ExitCode.USAGE,
+            )
         return entries
 
     @contextmanager
@@ -90,3 +93,21 @@ class Registry:
         temporary = self.path.with_name(self.path.name + ".tmp")
         temporary.write_text(REGISTRY_HEADER + "".join("\n[[repo]]\n" + entry.to_toml() for entry in entries))
         temporary.replace(self.path)
+
+
+def _is_well_formed_table(data) -> bool:
+    return (
+        isinstance(data, dict)
+        and set(data) <= set(TOML_FIELDS)
+        and isinstance(data.get("source"), str)
+        and bool(data["source"].strip())
+        and isinstance(data.get("key", ""), str)
+        and isinstance(data.get("ref", ""), str)
+        and all(_is_string_list(data[name]) for name in ("paths", "languages", "ignores") if name in data)
+        and type(data.get("max_bytes", 1)) is int
+        and data.get("max_bytes", 1) > 0
+    )
+
+
+def _is_string_list(value) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)

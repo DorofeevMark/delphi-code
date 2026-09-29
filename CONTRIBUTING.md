@@ -8,7 +8,41 @@ Use a Python 3.12 build that supports SQLite loadable extensions, such as a uv-m
 uv venv --python 3.12 --managed-python .venv
 uv pip install -r requirements-lock.txt
 uv pip install --no-deps --no-build-isolation -e .
+uv pip install --group dev
 .venv/bin/delphi-code setup
+```
+
+## Code conventions
+
+The aim is code a newcomer can read top to bottom without a guide.
+
+**Layers.** Each module has one job, and dependencies point downward:
+
+| Layer | Modules | Knows about |
+|---|---|---|
+| Entry point | `cli.py` | argparse and JSON output only; one small handler per command |
+| Services | `projects.py`, `doctor.py`, `setup.py` | what a command does, expressed through domain objects |
+| Domain | `store.py`, `manifest.py`, `registry.py`, `sources.py`, `hosts.py`, `model.py`, `selection.py`, `files.py`, `indexing.py` | one concept each |
+| Foundations | `errors.py`, `keys.py`, `paths.py`, `offline.py` | nothing above them |
+
+Lower layers never import `cli`, and no module below `cli` sees an `argparse.Namespace`.
+
+**Interfaces.**
+- Hide representations behind objects. Callers ask `manifest.ready` or `index.search(...)`; they never reach into JSON dicts or SQL.
+- Pass domain types (`LocalModel`, `FileSelection`, `Checkout`, `Manifest`), not tuples or loose dicts. Dicts appear only at the JSON output edge.
+- Anything a module does not export starts with `_`. Public functions and methods carry type hints.
+- Constructors stay cheap; expensive work (loading the encoder, hashing) is lazy or explicit (`LocalModel.inspect`).
+
+**Names over comments.** Make names carry the meaning and default to no comments or docstrings. Keep a comment only for a non-obvious *why* that no name can express. Replace magic values with named constants.
+
+**Errors.** Raise `Failure(code, message, ExitCode.X)` from `errors.py`. `code` is the stable machine-readable identifier; `ExitCode` follows the table in the README. The message tells the user how to recover.
+
+**Tests.** Test behaviour through public seams: the CLI entry points, `LocalModel.inspect` (replaced by `tests/fakes.FakeModel`), and `projects.index_checkout`. Do not patch private helpers.
+
+**Style.** Ruff formats and lints (120 columns) and pyright type-checks the package. Run them before committing:
+
+```sh
+bash scripts/lint.sh
 ```
 
 ## Tests

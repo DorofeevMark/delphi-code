@@ -6,13 +6,14 @@ import tomllib
 import unittest
 from unittest.mock import patch
 
+from fakes import use_fake_model
+
 from delphi_code.cli import arguments, execute
 from delphi_code.errors import Failure
 from delphi_code.keys import local_key
 from delphi_code.registry import Entry, Registry
 from delphi_code.selection import FileSelection
 from delphi_code.store import Store
-from fakes import use_fake_model
 
 
 class RegistryCommands(unittest.TestCase):
@@ -21,7 +22,12 @@ class RegistryCommands(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.registry = self.root / "repos.toml"
-        self.enterContext(patch.dict(os.environ, {"DELPHI_CODE_INDEX_ROOT": str(self.root / "indexes"), "DELPHI_CODE_REGISTRY": str(self.registry)}))
+        self.enterContext(
+            patch.dict(
+                os.environ,
+                {"DELPHI_CODE_INDEX_ROOT": str(self.root / "indexes"), "DELPHI_CODE_REGISTRY": str(self.registry)},
+            )
+        )
         use_fake_model(self, self.root / "model")
         self.indexed = []
 
@@ -116,7 +122,15 @@ class RegistryCommands(unittest.TestCase):
         self.assertEqual(raised.exception.code, "project_missing")
 
     def test_invalid_registry(self):
-        for content in ("[[repo]]\nsource = 'relative/path'\n", "[[repo]]\nsource = 'gitlab.com/acme/api'\n", "[[repo]]\npath = 1\n", "repo = 3\n", "[[repo]]\nsource = 'x'\nmax_bytes = 0\n", "[[repo]]\nsource = 'x'\nkey = 1\n", "not toml ["):
+        for content in (
+            "[[repo]]\nsource = 'relative/path'\n",
+            "[[repo]]\nsource = 'gitlab.com/acme/api'\n",
+            "[[repo]]\npath = 1\n",
+            "repo = 3\n",
+            "[[repo]]\nsource = 'x'\nmax_bytes = 0\n",
+            "[[repo]]\nsource = 'x'\nkey = 1\n",
+            "not toml [",
+        ):
             self.registry.write_text(content)
             with self.assertRaises(Failure) as raised:
                 Registry().entries()
@@ -130,12 +144,20 @@ class RegistryFile(unittest.TestCase):
         self.registry = Registry(Path(temporary.name) / "repos.toml")
 
     def test_round_trip_leaves_out_defaults(self):
-        entries = [Entry("/src/api", "bitbucket.org/acme/api", FileSelection(paths=["src/*"])), Entry("~/web", selection=FileSelection(max_bytes=10))]
+        entries = [
+            Entry("/src/api", "bitbucket.org/acme/api", FileSelection(paths=["src/*"])),
+            Entry("~/web", selection=FileSelection(max_bytes=10)),
+        ]
         with self.registry.edit() as current:
             current.extend(entries)
         self.assertEqual(self.registry.entries(), entries)
-        self.assertEqual(tomllib.loads(self.registry.path.read_text())["repo"],
-                         [{"source": "/src/api", "key": "bitbucket.org/acme/api", "paths": ["src/*"]}, {"source": "~/web", "max_bytes": 10}])
+        self.assertEqual(
+            tomllib.loads(self.registry.path.read_text())["repo"],
+            [
+                {"source": "/src/api", "key": "bitbucket.org/acme/api", "paths": ["src/*"]},
+                {"source": "~/web", "max_bytes": 10},
+            ],
+        )
 
     def test_unchanged_edit_keeps_file(self):
         self.registry.path.write_text("# hand-written comment\n[[repo]]\nsource = '/src/api'\n")

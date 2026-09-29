@@ -44,3 +44,27 @@ include = ["delphi_code*"]
 
 [tool.setuptools.package-data]
 delphi_code = ["model_provenance.json"]
+
+[dependency-groups]
+dev = ["ruff==0.16.9", "pyright==1.1.414"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "N", "RUF"]
+ignore = ["E501", "N818"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E731"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+
+[tool.pyright]
+include = ["delphi_code"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"

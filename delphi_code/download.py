@@ -15,7 +15,9 @@ def main():
     manifest = json.loads(Path(__file__).with_name("model_provenance.json").read_text())
     destination = Path(sys.argv[1])
     snapshot_download(
-        manifest["repository"], revision=manifest["revision"], local_dir=destination,
+        manifest["repository"],
+        revision=manifest["revision"],
+        local_dir=destination,
         allow_patterns=list(manifest["sha256"]),
     )
     if not (destination / "LICENSE").exists():

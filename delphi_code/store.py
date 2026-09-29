@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 import fcntl
@@ -8,7 +9,7 @@ from pathlib import Path
 import secrets
 import shutil
 import sqlite3
-from typing import Iterator, NamedTuple
+from typing import NamedTuple
 
 from .errors import ExitCode, Failure
 from .keys import is_explicit_path, local_key, match_key, project_key
@@ -16,11 +17,14 @@ from .manifest import LEGACY_SCHEMA_VERSION, SCHEMA_VERSION, Manifest
 from .model import LocalModel
 from .paths import index_root
 
+
 def require_sqlite_extensions():
     if not hasattr(sqlite3.Connection, "enable_load_extension"):
-        raise Failure("sqlite_extensions_unavailable",
-                      "This Python disables SQLite extension loading; provision a Python build with loadable SQLite extensions",
-                      ExitCode.RUNTIME_ASSETS)
+        raise Failure(
+            "sqlite_extensions_unavailable",
+            "This Python disables SQLite extension loading; provision a Python build with loadable SQLite extensions",
+            ExitCode.RUNTIME_ASSETS,
+        )
 
 
 @contextmanager
@@ -82,15 +86,21 @@ class Index:
     def read_manifest_compatible_with(self, model: LocalModel) -> Manifest:
         manifest = self.read_manifest()
         if manifest.conflicts_with(model):
-            raise Failure("model_mismatch",
-                          f"Model assets differ from the index; restore the original model or move {self.directory} aside and reindex",
-                          ExitCode.INDEX_STATE)
+            raise Failure(
+                "model_mismatch",
+                f"Model assets differ from the index; restore the original model or move {self.directory} aside and reindex",
+                ExitCode.INDEX_STATE,
+            )
         return manifest
 
     def read_searchable_manifest(self, model: LocalModel) -> Manifest:
         manifest = self.read_manifest_compatible_with(model)
         if not manifest.ready:
-            raise Failure("index_incomplete", "Last index did not complete; run index again before searching", ExitCode.INDEX_STATE)
+            raise Failure(
+                "index_incomplete",
+                "Last index did not complete; run index again before searching",
+                ExitCode.INDEX_STATE,
+            )
         return manifest
 
     def counts(self) -> dict:
@@ -216,4 +226,4 @@ def _is_legacy(manifest: Manifest | None) -> bool:
 
 
 def _cosine_similarity_of_unit_vectors(l2_distance: float) -> float:
-    return max(-1.0, min(1.0, 1.0 - l2_distance ** 2 / 2.0))
+    return max(-1.0, min(1.0, 1.0 - l2_distance**2 / 2.0))

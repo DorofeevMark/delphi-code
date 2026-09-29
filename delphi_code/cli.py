@@ -1,10 +1,10 @@
 import argparse
+from collections.abc import Callable
 from contextlib import redirect_stdout
 import json
 import os
 from pathlib import Path
 import sys
-from typing import Callable
 
 from . import projects
 from .errors import ExitCode, Failure
@@ -27,8 +27,12 @@ def arguments() -> argparse.Namespace:
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("index", "search", "status", "doctor"):
         command = commands.add_parser(name)
-        command.add_argument("--project", "-p", default=None if name == "search" else str(Path.cwd()),
-                             help="Project path, key, or indexed name; search defaults to all indexes")
+        command.add_argument(
+            "--project",
+            "-p",
+            default=None if name == "search" else str(Path.cwd()),
+            help="Project path, key, or indexed name; search defaults to all indexes",
+        )
         if name != "status":
             _add_model_option(command)
         if name in {"index", "search"}:
@@ -37,9 +41,13 @@ def arguments() -> argparse.Namespace:
             command.add_argument("query")
             command.add_argument("--limit", type=_search_limit, default=10)
     add = commands.add_parser("add", help="Track projects in the registry and index them")
-    add.add_argument("sources", nargs="*", metavar="SOURCE",
-                     help="Project directory, bitbucket.org/workspace/repository, or github.com/owner/repository; "
-                          "omit to pick repositories interactively")
+    add.add_argument(
+        "sources",
+        nargs="*",
+        metavar="SOURCE",
+        help="Project directory, bitbucket.org/workspace/repository, or github.com/owner/repository; "
+        "omit to pick repositories interactively",
+    )
     add.add_argument("--ref", help="Branch or tag of remote repositories; defaults to the default branch")
     _add_selection_options(add, indexing=True)
     _add_model_option(add)
@@ -79,7 +87,11 @@ def main():
         payload = {"ok": False, "command": command, "error": failure.to_json()}
         if failure.data is not None:
             payload["data"] = failure.data
-    print(json.dumps({"schema_version": OUTPUT_SCHEMA_VERSION, **payload}, ensure_ascii=False, sort_keys=True, allow_nan=False))
+    print(
+        json.dumps(
+            {"schema_version": OUTPUT_SCHEMA_VERSION, **payload}, ensure_ascii=False, sort_keys=True, allow_nan=False
+        )
+    )
     raise SystemExit(exit_code)
 
 
@@ -106,10 +118,12 @@ def _doctor(args):
 
 def _add(args):
     if not args.sources:
-        return projects.add_picked_repositories(Store(), Registry(), args.ref, _selection(args), args.model,
-                                                sync_now=not args.no_sync)
-    return projects.add_sources(Store(), Registry(), args.sources, args.ref, _selection(args), args.model,
-                                sync_now=not args.no_sync)
+        return projects.add_picked_repositories(
+            Store(), Registry(), args.ref, _selection(args), args.model, sync_now=not args.no_sync
+        )
+    return projects.add_sources(
+        Store(), Registry(), args.sources, args.ref, _selection(args), args.model, sync_now=not args.no_sync
+    )
 
 
 def _sync(args):
@@ -132,8 +146,15 @@ def _setup(args):
 
 
 COMMANDS: dict[str, Callable[[argparse.Namespace], dict]] = {
-    "index": _index, "search": _search, "status": _status, "doctor": _doctor,
-    "add": _add, "sync": _sync, "list": _list, "remove": _remove, "setup": _setup,
+    "index": _index,
+    "search": _search,
+    "status": _status,
+    "doctor": _doctor,
+    "add": _add,
+    "sync": _sync,
+    "list": _list,
+    "remove": _remove,
+    "setup": _setup,
 }
 
 

@@ -14,8 +14,10 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 SUPPORTED_MODULES = {
-    "sentence_transformers.models.Transformer", "sentence_transformers.models.Pooling",
-    "sentence_transformers.models.Normalize", "sentence_transformers.models.Dense",
+    "sentence_transformers.models.Transformer",
+    "sentence_transformers.models.Pooling",
+    "sentence_transformers.models.Normalize",
+    "sentence_transformers.models.Dense",
 }
 MODULES_WITHOUT_DIRECTORY = {"sentence_transformers.models.Normalize"}
 DOCUMENTATION_ASSETS = {"README.md", "LICENSE", "provenance.json"}
@@ -59,7 +61,10 @@ class LocalModel:
 
         try:
             return SentenceTransformer(
-                str(self.directory), device="cpu", local_files_only=True, trust_remote_code=False,
+                str(self.directory),
+                device="cpu",
+                local_files_only=True,
+                trust_remote_code=False,
                 model_kwargs={"use_safetensors": True, "local_files_only": True},
             )
         except Exception as exc:
@@ -80,10 +85,14 @@ def _validate_layout(directory: Path):
         if module.get("type") not in SUPPORTED_MODULES:
             raise _model_failure("model_invalid", f"Unsupported model module: {module.get('type')}")
         folder = (directory / module.get("path", "")).resolve()
-        if not folder.is_relative_to(directory) or (not folder.is_dir() and module["type"] not in MODULES_WITHOUT_DIRECTORY):
+        if not folder.is_relative_to(directory) or (
+            not folder.is_dir() and module["type"] not in MODULES_WITHOUT_DIRECTORY
+        ):
             raise _model_failure("model_missing", "A model module directory is missing or outside the model")
     if not any(directory.rglob("*.safetensors")):
-        raise _model_failure("model_missing", "Model requires local safetensors weights; pickle weights are unsupported")
+        raise _model_failure(
+            "model_missing", "Model requires local safetensors weights; pickle weights are unsupported"
+        )
 
 
 def _asset_digest(directory: Path) -> str:

@@ -1,5 +1,5 @@
-import json
 import fcntl
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -33,9 +33,17 @@ class OfflineCLI(unittest.TestCase):
             "sys.addaudithook(audit)\n"
         )
         cls.network_log = cls.base / "network.log"
-        cls.env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(cls.audit), str(ROOT)]),
-                       DELPHI_CODE_INDEX_ROOT=str(cls.index_root), DELPHI_CODE_REGISTRY=str(cls.base / "repos.toml"), HF_HOME=str(cls.base / "empty-hf-cache"), DELPHI_CODE_NETWORK_LOG=str(cls.network_log),
-                       COCOINDEX_DISABLE_USAGE_TRACKING="0", HF_HUB_OFFLINE="0", HF_HUB_DISABLE_TELEMETRY="0")
+        cls.env = dict(
+            os.environ,
+            PYTHONPATH=os.pathsep.join([str(cls.audit), str(ROOT)]),
+            DELPHI_CODE_INDEX_ROOT=str(cls.index_root),
+            DELPHI_CODE_REGISTRY=str(cls.base / "repos.toml"),
+            HF_HOME=str(cls.base / "empty-hf-cache"),
+            DELPHI_CODE_NETWORK_LOG=str(cls.network_log),
+            COCOINDEX_DISABLE_USAGE_TRACKING="0",
+            HF_HUB_OFFLINE="0",
+            HF_HUB_DISABLE_TELEMETRY="0",
+        )
 
     @classmethod
     def tearDownClass(cls):
@@ -75,7 +83,9 @@ class OfflineCLI(unittest.TestCase):
         doctor = self.invoke("doctor")
         self.assertEqual(doctor["dimensions"], 384)
         self.assertEqual(doctor["self_distance"], 0)
-        (self.project / "auth.py").write_text("def authenticate_user(password, expected_password):\n    return password == expected_password\n")
+        (self.project / "auth.py").write_text(
+            "def authenticate_user(password, expected_password):\n    return password == expected_password\n"
+        )
         (self.project / "math.py").write_text("def add_numbers(left, right):\n    return left + right\n")
         (self.project / ".gitignore").write_text("ignored.py\n*.private\n")
         (self.project / "ignored.py").write_text("TOP_SECRET = 'password'\n")
@@ -145,9 +155,13 @@ class OfflineCLI(unittest.TestCase):
         invoke = lambda *args, code=0: self.invoke(*args, code=code, project=False, env=env)
         project = self.base / "tracked"
         project.mkdir()
-        (project / "parse.py").write_text("def parse_configuration(text):\n    return dict(line.split('=') for line in text.splitlines())\n")
+        (project / "parse.py").write_text(
+            "def parse_configuration(text):\n    return dict(line.split('=') for line in text.splitlines())\n"
+        )
         subprocess.run(["git", "init", "-q", str(project)], check=True)
-        subprocess.run(["git", "-C", str(project), "remote", "add", "origin", "git@bitbucket.org:acme/tracked.git"], check=True)
+        subprocess.run(
+            ["git", "-C", str(project), "remote", "add", "origin", "git@bitbucket.org:acme/tracked.git"], check=True
+        )
         added = invoke("add", str(project))["repos"]
         self.assertEqual([(repo["ok"], repo["key"]) for repo in added], [(True, "bitbucket.org/acme/tracked")])
         results = invoke("search", "read config file", "-p", "acme/tracked")["results"]
@@ -166,35 +180,60 @@ class OfflineCLI(unittest.TestCase):
 
     def test_remote_workflow(self):
         remote = self.base / "remote"
-        env = dict(self.env, DELPHI_CODE_INDEX_ROOT=str(self.base / "remote-indexes"), DELPHI_CODE_REGISTRY=str(self.base / "remote.toml"),
-                   DELPHI_CODE_BITBUCKET_GIT_BASE=remote.as_uri(), DELPHI_CODE_GITHUB_GIT_BASE=remote.as_uri())
+        env = dict(
+            self.env,
+            DELPHI_CODE_INDEX_ROOT=str(self.base / "remote-indexes"),
+            DELPHI_CODE_REGISTRY=str(self.base / "remote.toml"),
+            DELPHI_CODE_BITBUCKET_GIT_BASE=remote.as_uri(),
+            DELPHI_CODE_GITHUB_GIT_BASE=remote.as_uri(),
+        )
         invoke = lambda *args, code=0: self.invoke(*args, code=code, project=False, env=env)
         git = lambda *args: subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
         work = self.base / "remote-work"
         git("init", "-q", "--bare", "-b", "main", str(remote / "acme/api.git"))
         git("clone", "-q", str(remote / "acme/api.git"), str(work))
         git("-C", str(work), "symbolic-ref", "HEAD", "refs/heads/main")
-        (work / "auth.py").write_text("def authenticate_user(password, expected_password):\n    return password == expected_password\n")
+        (work / "auth.py").write_text(
+            "def authenticate_user(password, expected_password):\n    return password == expected_password\n"
+        )
         (work / "math.py").write_text("def add_numbers(left, right):\n    return left + right\n")
         git("-C", str(work), "add", ".")
         git("-C", str(work), "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "first")
         git("-C", str(work), "push", "-q", "origin", "main")
         added = invoke("add", "bitbucket.org/acme/api")["repos"][0]
-        self.assertEqual((added["key"], added["project"], added["ref"], added["files"]), ("bitbucket.org/acme/api", None, "main", 2))
+        self.assertEqual(
+            (added["key"], added["project"], added["ref"], added["files"]), ("bitbucket.org/acme/api", None, "main", 2)
+        )
         commit = added["commit"]
         result = invoke("search", "verify user password", "--limit", "1")["results"][0]
-        self.assertEqual((result["key"], result["path"], result["project"]), ("bitbucket.org/acme/api", "auth.py", None))
+        self.assertEqual(
+            (result["key"], result["path"], result["project"]), ("bitbucket.org/acme/api", "auth.py", None)
+        )
         self.assertEqual(result["url"], f"https://bitbucket.org/acme/api/src/{commit}/auth.py#lines-1:2")
         self.assertTrue(invoke("sync")["repos"][0]["unchanged"])
         (work / "math.py").write_text("def multiply_numbers(left, right):\n    return left * right\n")
-        git("-C", str(work), "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-am", "second")
+        git(
+            "-C",
+            str(work),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-q",
+            "-am",
+            "second",
+        )
         git("-C", str(work), "push", "-q", "origin", "main")
         synced = invoke("sync")["repos"][0]
         self.assertFalse(synced["unchanged"])
         self.assertNotEqual(synced["commit"], commit)
         self.assertEqual((synced["incremental"].get("num_unchanged"), synced["incremental"].get("num_adds", 0)), (1, 0))
         self.assertEqual(invoke("index", "-p", "acme/api", code=2)["code"], "usage")
-        self.assertIn("multiply", invoke("search", "multiply", "-p", "bitbucket.org/acme/api", "--limit", "1")["results"][0]["text"])
+        self.assertIn(
+            "multiply",
+            invoke("search", "multiply", "-p", "bitbucket.org/acme/api", "--limit", "1")["results"][0]["text"],
+        )
         mirrored = invoke("add", "github.com/acme/api")["repos"][0]
         self.assertEqual((mirrored["key"], mirrored["incremental"].get("num_adds")), ("github.com/acme/api", 2))
         result = invoke("search", "multiply", "-p", "github.com/acme/api", "--limit", "1")["results"][0]
@@ -206,15 +245,20 @@ class NetworkSandbox(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("DELPHI_CODE_OS_SANDBOX") == "1", "Run via scripts/test_offline.sh")
     def test_os_denies_network(self):
         probe = subprocess.run(
-            [sys.executable, "-c",
-             "import socket, sys\n"
-             "with socket.socket() as sock:\n"
-             "    try:\n"
-             "        sock.connect(('127.0.0.1', 9))\n"
-             "    except PermissionError:\n"
-             "        sys.exit(0)\n"
-             "    raise RuntimeError('OS network denial is not active')\n"],
-            capture_output=True, text=True, timeout=10,
+            [
+                sys.executable,
+                "-c",
+                "import socket, sys\n"
+                "with socket.socket() as sock:\n"
+                "    try:\n"
+                "        sock.connect(('127.0.0.1', 9))\n"
+                "    except PermissionError:\n"
+                "        sys.exit(0)\n"
+                "    raise RuntimeError('OS network denial is not active')\n",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         self.assertEqual(probe.returncode, 0, probe.stderr)
 

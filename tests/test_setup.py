@@ -1,7 +1,6 @@
 import argparse
 import fcntl
 import hashlib
-import json
 import os
 from pathlib import Path
 import socket
@@ -32,7 +31,10 @@ class Setup(unittest.TestCase):
         self.addCleanup(self.environment.stop)
 
     def test_import_and_reuse_without_download(self):
-        with patch("delphi_code.setup.diagnose", return_value={}) as doctor, patch("delphi_code.setup.download") as download:
+        with (
+            patch("delphi_code.setup.diagnose", return_value={}) as doctor,
+            patch("delphi_code.setup.download") as download,
+        ):
             first = provision(self.args.model, self.args.source)
             self.assertFalse(first["reused"])
             self.assertEqual(Path(first["model"]).joinpath("model.safetensors").read_bytes(), b"weights")
@@ -50,17 +52,23 @@ class Setup(unittest.TestCase):
         self.assertEqual((destination / "model.safetensors").read_bytes(), b"corrupt")
 
     def test_failed_diagnostics_does_not_publish(self):
-        with patch("delphi_code.setup.diagnose", side_effect=Failure("broken", "diagnostic failed", ExitCode.OPERATION)):
-            with self.assertRaises(Failure):
-                provision(self.args.model, self.args.source)
+        with patch(
+            "delphi_code.setup.diagnose", side_effect=Failure("broken", "diagnostic failed", ExitCode.OPERATION)
+        ), self.assertRaises(Failure):
+            provision(self.args.model, self.args.source)
         self.assertFalse(Path(self.args.model).exists())
         self.assertEqual(list(Path(self.args.model).parent.glob(".model-*")), [])
 
     def test_download_is_verified_before_publication(self):
         self.args.source = None
+
         def fake_download(destination):
             (destination / "model.safetensors").write_bytes(b"bad download")
-        with patch("delphi_code.setup.download", side_effect=fake_download), patch("delphi_code.setup.diagnose") as doctor:
+
+        with (
+            patch("delphi_code.setup.download", side_effect=fake_download),
+            patch("delphi_code.setup.diagnose") as doctor,
+        ):
             with self.assertRaisesRegex(Failure, "checksum"):
                 provision(self.args.model, self.args.source)
             doctor.assert_not_called()
@@ -110,8 +118,13 @@ class Setup(unittest.TestCase):
 
 class Storage(unittest.TestCase):
     def test_platform_defaults(self):
-        with patch("delphi_code.paths.Path.home", return_value=Path("/home/test")), patch("delphi_code.paths.sys.platform", "darwin"):
+        with (
+            patch("delphi_code.paths.Path.home", return_value=Path("/home/test")),
+            patch("delphi_code.paths.sys.platform", "darwin"),
+        ):
             self.assertEqual(data_directory(), Path("/home/test/Library/Application Support/delphi-code"))
-        with patch("delphi_code.paths.sys.platform", "linux"), patch.dict(os.environ, {"XDG_DATA_HOME": "/tmp/custom-data"}):
+        with (
+            patch("delphi_code.paths.sys.platform", "linux"),
+            patch.dict(os.environ, {"XDG_DATA_HOME": "/tmp/custom-data"}),
+        ):
             self.assertEqual(data_directory(), Path("/tmp/custom-data/delphi-code").resolve())
-

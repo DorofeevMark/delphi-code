@@ -6,15 +6,16 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from fakes import use_fake_model
+
 from delphi_code.cli import arguments, execute
 from delphi_code.errors import Failure
+from delphi_code.hosts import Bitbucket, GitHub
+from delphi_code.manifest import Manifest
 from delphi_code.picker import TrackingChanges
 from delphi_code.registry import Registry
-from delphi_code.hosts import Bitbucket, GitHub
-from delphi_code.sources import GitRemoteSource, LocalSource, source_from_registry, source_from_argument
-from delphi_code.manifest import Manifest
+from delphi_code.sources import GitRemoteSource, LocalSource, source_from_argument, source_from_registry
 from delphi_code.store import Store
-from fakes import use_fake_model
 
 
 def git(*args, cwd=None):
@@ -27,11 +28,17 @@ class LocalHostWithApiRepository(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.base = self.root / "remote"
-        self.enterContext(patch.dict(os.environ, {
-            "DELPHI_CODE_BITBUCKET_GIT_BASE": self.base.as_uri(), "DELPHI_CODE_GITHUB_GIT_BASE": self.base.as_uri(),
-            "DELPHI_CODE_INDEX_ROOT": str(self.root / "indexes"),
-            "DELPHI_CODE_REGISTRY": str(self.root / "repos.toml"),
-        }))
+        self.enterContext(
+            patch.dict(
+                os.environ,
+                {
+                    "DELPHI_CODE_BITBUCKET_GIT_BASE": self.base.as_uri(),
+                    "DELPHI_CODE_GITHUB_GIT_BASE": self.base.as_uri(),
+                    "DELPHI_CODE_INDEX_ROOT": str(self.root / "indexes"),
+                    "DELPHI_CODE_REGISTRY": str(self.root / "repos.toml"),
+                },
+            )
+        )
         for name in ("BITBUCKET_USERNAME", "BITBUCKET_APP_PASSWORD", "GITHUB_TOKEN", "GH_TOKEN"):
             os.environ.pop(name, None)
         git("init", "-q", "--bare", "-b", "main", str(self.base / "acme/api.git"))
@@ -62,7 +69,13 @@ class ParseSource(unittest.TestCase):
             self.assertIsInstance(source.host, GitHub, text)
             self.assertEqual(source.key, "github.com/acme/api")
         self.assertIsInstance(source_from_registry("/src/api"), LocalSource)
-        for text in ("gitlab.com/acme/api", "github.com/acme", "bitbucket.org/acme", "bitbucket.org/acme/api/extra", "relative/path"):
+        for text in (
+            "gitlab.com/acme/api",
+            "github.com/acme",
+            "bitbucket.org/acme",
+            "bitbucket.org/acme/api/extra",
+            "relative/path",
+        ):
             self.assertIsNone(source_from_registry(text), text)
 
     def test_arguments_prefer_directories(self):
@@ -93,7 +106,10 @@ class RemoteGitCheckouts(LocalHostWithApiRepository):
             self.assertEqual((directory / "parse.py").read_text(), "def parse(text):\n    return text\n")
             self.assertIsNone(checkout.project)
             self.assertEqual(checkout.provenance["commit"], head)
-            self.assertEqual(checkout.provenance["permalink"], f"https://bitbucket.org/acme/api/src/{head}/{{path}}#lines-{{start}}:{{end}}")
+            self.assertEqual(
+                checkout.provenance["permalink"],
+                f"https://bitbucket.org/acme/api/src/{head}/{{path}}#lines-{{start}}:{{end}}",
+            )
         self.assertFalse(directory.exists())
 
     def test_missing_repository(self):
@@ -107,7 +123,14 @@ class RemoteGitCheckouts(LocalHostWithApiRepository):
 
         def run(command, **options):
             askpass = options["env"].get("GIT_ASKPASS")
-            answers = [real([askpass, prompt], capture_output=True, text=True, env=options["env"]).stdout for prompt in ("Username for 'https://host': ", "Password for 'https://user@host': ")] if askpass else None
+            answers = (
+                [
+                    real([askpass, prompt], capture_output=True, text=True, env=options["env"]).stdout
+                    for prompt in ("Username for 'https://host': ", "Password for 'https://user@host': ")
+                ]
+                if askpass
+                else None
+            )
             calls.append((command, answers))
             return real(command, **options)
 
@@ -122,15 +145,23 @@ class RemoteGitCheckouts(LocalHostWithApiRepository):
         self.assertNotIn("s3cret", " ".join(command))
         self.assertEqual(answers, ["me\n", "s3cret\n"])
         with patch.dict(os.environ, {"GITHUB_TOKEN": "ghp_token"}):
-            self.assertEqual(self.git_call_with_askpass_answers(GitRemoteSource(GitHub(), "acme", "api"))[1], ["x-access-token\n", "ghp_token\n"])
+            self.assertEqual(
+                self.git_call_with_askpass_answers(GitRemoteSource(GitHub(), "acme", "api"))[1],
+                ["x-access-token\n", "ghp_token\n"],
+            )
         command, answers = self.git_call_with_askpass_answers(GitRemoteSource(Bitbucket(), "acme", "api"))
         self.assertEqual((command[1], answers), ("ls-remote", None))
 
     def test_github_checkout_links_to_github(self):
         head = git("rev-parse", "HEAD", cwd=self.work)
         with GitRemoteSource(GitHub(), "acme", "api").checkout() as checkout:
-            self.assertEqual((checkout.provenance["kind"], checkout.provenance["key"]), ("github", "github.com/acme/api"))
-            self.assertEqual(checkout.provenance["permalink"], f"https://github.com/acme/api/blob/{head}/{{path}}#L{{start}}-L{{end}}")
+            self.assertEqual(
+                (checkout.provenance["kind"], checkout.provenance["key"]), ("github", "github.com/acme/api")
+            )
+            self.assertEqual(
+                checkout.provenance["permalink"],
+                f"https://github.com/acme/api/blob/{head}/{{path}}#L{{start}}-L{{end}}",
+            )
 
 
 class RemoteSync(LocalHostWithApiRepository):
@@ -143,7 +174,12 @@ class RemoteSync(LocalHostWithApiRepository):
             self.checkouts.append(checkout)
             index = store.get_or_create(checkout.key, checkout.project)
             index.write_manifest(Manifest.for_build(checkout, options, model).completed())
-            return {"project": None, "key": index.key, "index_directory": str(index.directory), "commit": checkout.provenance.get("commit")}
+            return {
+                "project": None,
+                "key": index.key,
+                "index_directory": str(index.directory),
+                "commit": checkout.provenance.get("commit"),
+            }
 
         self.enterContext(patch("delphi_code.projects.index_checkout", side_effect=index_checkout))
 
@@ -180,7 +216,9 @@ class RemoteSync(LocalHostWithApiRepository):
             self.run_command("index", "-p", "acme/api")
         self.assertEqual(raised.exception.code, "usage")
         row = self.run_command("list")["repos"][0]
-        self.assertEqual((row["key"], row["tracked"], row["project"], row["ref"]), ("bitbucket.org/acme/api", True, None, "main"))
+        self.assertEqual(
+            (row["key"], row["tracked"], row["project"], row["ref"]), ("bitbucket.org/acme/api", True, None, "main")
+        )
         self.run_command("remove", "acme/api")
         self.assertEqual((Registry().entries(), Store().all()), ([], []))
 
@@ -199,9 +237,14 @@ class RemoteSync(LocalHostWithApiRepository):
         picker = self.pick(TrackingChanges(["bitbucket.org/acme/api"], []))
         added = self.run_command("add", "--path", "src/*")
         self.assertEqual(picker.call_args.args[0], {f"local:{self.work}"})
-        self.assertEqual(([repo["key"] for repo in added["repos"]], added["removed"], added["cancelled"]), (["bitbucket.org/acme/api"], [], False))
-        self.assertEqual([(entry.source, entry.selection.paths) for entry in Registry().entries()],
-                         [(str(self.work), []), ("bitbucket.org/acme/api", ["src/*"])])
+        self.assertEqual(
+            ([repo["key"] for repo in added["repos"]], added["removed"], added["cancelled"]),
+            (["bitbucket.org/acme/api"], [], False),
+        )
+        self.assertEqual(
+            [(entry.source, entry.selection.paths) for entry in Registry().entries()],
+            [(str(self.work), []), ("bitbucket.org/acme/api", ["src/*"])],
+        )
         index_directory = Store().get("bitbucket.org/acme/api").directory
         picker.return_value = TrackingChanges([], ["bitbucket.org/acme/api"])
         removed = self.run_command("add")

@@ -16,7 +16,9 @@ revision = info.sha
 if info.card_data.get("license") != "apache-2.0":
     raise SystemExit("Unexpected model license; review it before provisioning")
 snapshot_download(
-    repo, revision=revision, local_dir=args.destination,
+    repo,
+    revision=revision,
+    local_dir=args.destination,
     allow_patterns=["*.json", "*.txt", "*.safetensors", "1_Pooling/*", "LICENSE", "README.md"],
     ignore_patterns=["onnx/*", "openvino/*"],
 )
@@ -27,7 +29,16 @@ files = {}
 for path in sorted(args.destination.rglob("*")):
     if path.is_file() and ".cache" not in path.parts:
         files[path.relative_to(args.destination).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
-(args.destination / "provenance.json").write_text(json.dumps({
-    "repository": repo, "revision": revision, "license": "Apache-2.0", "sha256": files,
-}, indent=2) + "\n")
+(args.destination / "provenance.json").write_text(
+    json.dumps(
+        {
+            "repository": repo,
+            "revision": revision,
+            "license": "Apache-2.0",
+            "sha256": files,
+        },
+        indent=2,
+    )
+    + "\n"
+)
 print(args.destination.resolve())

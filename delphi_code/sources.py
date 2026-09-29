@@ -6,9 +6,9 @@ import subprocess
 import tempfile
 from typing import NamedTuple, Protocol
 
+from .errors import ExitCode, Failure
 from .hosts import HOSTS_BY_DOMAIN
 from .keys import is_explicit_path, normalize_remote, project_key
-from .errors import ExitCode, Failure
 
 ASKPASS_SCRIPT = """#!/bin/sh
 case "$1" in
@@ -76,16 +76,42 @@ class GitRemoteSource:
         revision = revision or self.latest_revision(ref)
         with tempfile.TemporaryDirectory(prefix="delphi-code-checkout-") as temporary:
             directory = Path(temporary) / "repository"
-            self._git("clone", "--quiet", "--depth", "1", "--single-branch", "--no-tags", "--branch", revision.ref, self.clone_url, str(directory))
+            self._git(
+                "clone",
+                "--quiet",
+                "--depth",
+                "1",
+                "--single-branch",
+                "--no-tags",
+                "--branch",
+                revision.ref,
+                self.clone_url,
+                str(directory),
+            )
             commit = self._git("-C", str(directory), "rev-parse", "HEAD").strip()
-            yield Checkout(directory, None, {
-                "kind": self.host.name.lower(), "key": self.key, "url": self.host.web_url(self.owner, self.repository),
-                "ref": revision.ref, "commit": commit, "permalink": self.host.permalink_template(self.owner, self.repository, commit),
-            })
+            yield Checkout(
+                directory,
+                None,
+                {
+                    "kind": self.host.name.lower(),
+                    "key": self.key,
+                    "url": self.host.web_url(self.owner, self.repository),
+                    "ref": revision.ref,
+                    "commit": commit,
+                    "permalink": self.host.permalink_template(self.owner, self.repository, commit),
+                },
+            )
 
     def _default_branch_revision(self):
         advertised = self._remote_refs("HEAD")
-        branch = next((value.removeprefix("ref: refs/heads/") for value, name in advertised if value.startswith("ref: ") and name == "HEAD"), None)
+        branch = next(
+            (
+                value.removeprefix("ref: refs/heads/")
+                for value, name in advertised
+                if value.startswith("ref: ") and name == "HEAD"
+            ),
+            None,
+        )
         commit = next((value for value, name in advertised if name == "HEAD" and not value.startswith("ref: ")), None)
         if not (branch and commit):
             raise Failure("remote_empty", f"{self.key} has no default branch", ExitCode.OPERATION)
@@ -93,7 +119,9 @@ class GitRemoteSource:
 
     def _named_revision(self, ref):
         commits = dict((name, value) for value, name in self._remote_refs(f"refs/heads/{ref}", f"refs/tags/{ref}"))
-        commit = commits.get(f"refs/heads/{ref}") or commits.get(f"refs/tags/{ref}^{{}}") or commits.get(f"refs/tags/{ref}")
+        commit = (
+            commits.get(f"refs/heads/{ref}") or commits.get(f"refs/tags/{ref}^{{}}") or commits.get(f"refs/tags/{ref}")
+        )
         if not commit:
             raise Failure("remote_ref_missing", f"{self.key} has no branch or tag named {ref}", ExitCode.OPERATION)
         return Revision(ref, commit)
@@ -114,20 +142,37 @@ def run_git(args, key, credentials, credentials_hint):
             askpass = Path(scratch) / "askpass"
             askpass.write_text(ASKPASS_SCRIPT)
             askpass.chmod(0o700)
-            environment.update(GIT_ASKPASS=str(askpass), DELPHI_CODE_GIT_USERNAME=credentials[0], DELPHI_CODE_GIT_PASSWORD=credentials[1])
+            environment.update(
+                GIT_ASKPASS=str(askpass),
+                DELPHI_CODE_GIT_USERNAME=credentials[0],
+                DELPHI_CODE_GIT_PASSWORD=credentials[1],
+            )
             override_credential_helpers = ["-c", "credential.helper="]
         try:
-            result = subprocess.run(["git", *override_credential_helpers, *args], capture_output=True, text=True,
-                                    timeout=GIT_TIMEOUT_SECONDS, env=environment)
+            result = subprocess.run(
+                ["git", *override_credential_helpers, *args],
+                capture_output=True,
+                text=True,
+                timeout=GIT_TIMEOUT_SECONDS,
+                env=environment,
+            )
         except FileNotFoundError as exc:
             raise Failure("git_missing", "git is required for remote repositories", ExitCode.RUNTIME_ASSETS) from exc
         except subprocess.TimeoutExpired as exc:
-            raise Failure("remote_unavailable", f"git timed out after {GIT_TIMEOUT_SECONDS} seconds for {key}", ExitCode.OPERATION) from exc
+            raise Failure(
+                "remote_unavailable", f"git timed out after {GIT_TIMEOUT_SECONDS} seconds for {key}", ExitCode.OPERATION
+            ) from exc
     if result.returncode == 0:
         return result.stdout
-    last_error_line = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else f"git exited with {result.returncode}"
+    last_error_line = (
+        result.stderr.strip().splitlines()[-1] if result.stderr.strip() else f"git exited with {result.returncode}"
+    )
     if any(failure in result.stderr for failure in AUTHENTICATION_FAILURES):
-        raise Failure("remote_auth_failed", f"Access to {key} was refused: {last_error_line}. To fix it, {credentials_hint}", ExitCode.OPERATION)
+        raise Failure(
+            "remote_auth_failed",
+            f"Access to {key} was refused: {last_error_line}. To fix it, {credentials_hint}",
+            ExitCode.OPERATION,
+        )
     raise Failure("remote_unavailable", f"git failed for {key}: {last_error_line}", ExitCode.OPERATION)
 
 
@@ -148,5 +193,9 @@ def source_from_argument(text):
         return LocalSource(path.resolve())
     source = source_from_registry(text)
     if source is None:
-        raise Failure("usage", f"{text} is neither a project directory nor a repository such as bitbucket.org/workspace/repository or github.com/owner/repository", ExitCode.USAGE)
+        raise Failure(
+            "usage",
+            f"{text} is neither a project directory nor a repository such as bitbucket.org/workspace/repository or github.com/owner/repository",
+            ExitCode.USAGE,
+        )
     return source

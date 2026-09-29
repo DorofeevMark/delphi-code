@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from fakes import use_fake_model
 import numpy as np
 import sqlite_vec
 
@@ -14,7 +15,6 @@ from delphi_code.cli import arguments, execute
 from delphi_code.errors import Failure
 from delphi_code.keys import local_key
 from delphi_code.store import Store
-from fakes import use_fake_model
 
 
 class CrossProjectSearch(unittest.TestCase):
@@ -30,17 +30,27 @@ class CrossProjectSearch(unittest.TestCase):
         project.mkdir()
         state = Store().get_or_create(local_key(project), project).directory
         (state / "lock").touch()
-        info = dict(schema_version=2, project=str(project), source={"key": local_key(project)}, ready=True, model_sha256="same-model")
+        info = dict(
+            schema_version=2,
+            project=str(project),
+            source={"key": local_key(project)},
+            ready=True,
+            model_sha256="same-model",
+        )
         info.update(updates)
         (state / "manifest.json").write_text(json.dumps(info))
         db = sqlite3.connect(state / "vectors.sqlite")
         try:
             db.enable_load_extension(True)
             sqlite_vec.load(db)
-            db.execute("CREATE VIRTUAL TABLE passages USING vec0(id INTEGER PRIMARY KEY, vector FLOAT[2], +path TEXT, +language TEXT, +text TEXT, +start_line INTEGER, +end_line INTEGER)")
+            db.execute(
+                "CREATE VIRTUAL TABLE passages USING vec0(id INTEGER PRIMARY KEY, vector FLOAT[2], +path TEXT, +language TEXT, +text TEXT, +start_line INTEGER, +end_line INTEGER)"
+            )
             for identifier, (path, language, vector) in enumerate(rows):
-                db.execute("INSERT INTO passages(id,vector,path,language,text,start_line,end_line) VALUES (?,?,?,?,?,1,1)",
-                           (identifier, np.array(vector, dtype=np.float32).tobytes(), path, language, path))
+                db.execute(
+                    "INSERT INTO passages(id,vector,path,language,text,start_line,end_line) VALUES (?,?,?,?,?,1,1)",
+                    (identifier, np.array(vector, dtype=np.float32).tobytes(), path, language, path),
+                )
             db.commit()
         finally:
             db.close()
@@ -56,7 +66,9 @@ class CrossProjectSearch(unittest.TestCase):
         data = self.search("--limit", "2")
         self.assertIsNone(data["project"])
         self.assertEqual(data["projects"], sorted([str(first), str(second)]))
-        self.assertEqual([(r["project"], r["path"]) for r in data["results"]], [(str(second), "best.py"), (str(first), "b.py")])
+        self.assertEqual(
+            [(r["project"], r["path"]) for r in data["results"]], [(str(second), "best.py"), (str(first), "b.py")]
+        )
         self.assertEqual(len(self.model.embedded), 1)
         scoped = self.search("-p", "one", "--limit", "1")
         self.assertEqual(scoped["project"], str(first))

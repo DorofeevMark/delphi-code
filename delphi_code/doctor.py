@@ -22,9 +22,17 @@ def diagnose(model_location: str, store: Store, project_name: str) -> dict:
     with vector_database(":memory:") as db:
         self_distance = db.execute("SELECT vec_distance_L2(?, ?)", (vector.tobytes(), vector.tobytes())).fetchone()[0]
     return {
-        "project": str(project) if project else None, "key": key, "index_directory": str(index.directory) if index else None,
-        "model": str(model.directory), "model_sha256": model.sha256,
-        "dimensions": len(vector), "self_distance": self_distance, "device": "cpu",
-        "cocoindex_storage": "ok", "offline": True, "network_guard": "python_audit", "sqlite": sqlite3.sqlite_version,
+        "project": str(project) if project else None,
+        "key": key,
+        "index_directory": str(index.directory) if index else None,
+        "model": str(model.directory),
+        "model_sha256": model.sha256,
+        "dimensions": len(vector),
+        "self_distance": self_distance,
+        "device": "cpu",
+        "cocoindex_storage": "ok",
+        "offline": True,
+        "network_guard": "python_audit",
+        "sqlite": sqlite3.sqlite_version,
         "dependencies": {name: version(name) for name in REPORTED_DEPENDENCIES},
     }

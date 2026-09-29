@@ -53,6 +53,10 @@ jobs:
         run: |
           uv venv --python 3.12 --managed-python .venv
           uv pip install dist/*.whl
+      - name: Lint and type-check
+        run: |
+          uv pip install --group dev
+          bash scripts/lint.sh
       - name: Download and validate model
         env:
           DELPHI_CODE_MODEL: ${{ runner.temp }}/delphi-code-model

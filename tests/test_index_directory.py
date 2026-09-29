@@ -18,8 +18,11 @@ def git(project, *args):
 class Canonical(unittest.TestCase):
     def test_remote_forms_share_a_key(self):
         for remote in (
-            "git@bitbucket.org:Acme/API.git", "https://user@bitbucket.org/acme/api.git", "ssh://git@bitbucket.org:22/acme/api",
-            "https://bitbucket.org/acme/api/", "bitbucket.org/acme/api",
+            "git@bitbucket.org:Acme/API.git",
+            "https://user@bitbucket.org/acme/api.git",
+            "ssh://git@bitbucket.org:22/acme/api",
+            "https://bitbucket.org/acme/api/",
+            "bitbucket.org/acme/api",
         ):
             self.assertEqual(normalize_remote(remote), "bitbucket.org/acme/api", remote)
 
@@ -52,7 +55,9 @@ class Identity(unittest.TestCase):
 
     def test_create_is_stable_and_separates_keys(self):
         first = self.store.get_or_create("bitbucket.org/acme/api", self.root / "one")
-        self.assertEqual(self.store.get_or_create("bitbucket.org/acme/api", self.root / "two").directory, first.directory)
+        self.assertEqual(
+            self.store.get_or_create("bitbucket.org/acme/api", self.root / "two").directory, first.directory
+        )
         second = self.store.get_or_create("local:/elsewhere/api", Path("/elsewhere/api"))
         self.assertNotEqual(first.directory, second.directory)
         self.assertEqual(self.store.get("bitbucket.org/acme/api").directory, first.directory)
@@ -79,7 +84,9 @@ class Identity(unittest.TestCase):
             (state / "manifest.json").write_text(json.dumps({"schema_version": 1, "project": str(path), "ready": True}))
             states[name] = state
         keys = {index.directory.name: index.key for index in self.store.all()}
-        self.assertEqual(keys, {"a": "github.com/acme/api", "b": f"local:{duplicate}", "c": f"local:{self.root / 'gone'}"})
+        self.assertEqual(
+            keys, {"a": "github.com/acme/api", "b": f"local:{duplicate}", "c": f"local:{self.root / 'gone'}"}
+        )
         manifest = json.loads((states["a"] / "manifest.json").read_text())
         self.assertEqual((manifest["schema_version"], manifest["ready"]), (2, True))
         self.assertEqual({index.directory.name: index.key for index in self.store.all()}, keys)

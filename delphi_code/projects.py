@@ -41,7 +41,11 @@ def resolve_existing(store: Store, name: str) -> ResolvedProject:
 def resolve_indexed(store: Store, name: str) -> tuple[str, Index]:
     project, key, index = resolve_existing(store, name)
     if index is None:
-        raise Failure("index_missing", f"No index exists; run delphi-code index -p {shlex.quote(str(project))}", ExitCode.INDEX_STATE)
+        raise Failure(
+            "index_missing",
+            f"No index exists; run delphi-code index -p {shlex.quote(str(project))}",
+            ExitCode.INDEX_STATE,
+        )
     return key, index
 
 
@@ -69,16 +73,27 @@ def index_checkout(store: Store, checkout: Checkout, selection: FileSelection, m
         manifest = manifest.completed()
         counts = index.counts()
         index.write_manifest(manifest)
-    return {"project": _path_text(manifest.project), "key": checkout.key, "index_directory": str(index.directory),
-            **manifest.revision, **counts, "skipped": collected.skipped, "incremental": incremental}
+    return {
+        "project": _path_text(manifest.project),
+        "key": checkout.key,
+        "index_directory": str(index.directory),
+        **manifest.revision,
+        **counts,
+        "skipped": collected.skipped,
+        "incremental": incremental,
+    }
 
 
 def status(store: Store, name: str) -> dict:
     key, index = resolve_indexed(store, name)
     with index.lock(False):
         manifest = index.read_manifest()
-        return {"key": key, "index_directory": str(index.directory), **manifest.to_json(),
-                **(index.counts() if manifest.ready else {})}
+        return {
+            "key": key,
+            "index_directory": str(index.directory),
+            **manifest.to_json(),
+            **(index.counts() if manifest.ready else {}),
+        }
 
 
 def search_project(store: Store, name: str, request: SearchRequest, model_location: str) -> dict:
@@ -87,16 +102,28 @@ def search_project(store: Store, name: str, request: SearchRequest, model_locati
     with index.lock(False):
         manifest = index.read_searchable_manifest(model)
         results = _search_index(index, manifest, request, _query_vector(model, request))
-    return {"project": _path_text(manifest.project), "key": key, "index_directory": str(index.directory),
-            **manifest.revision, "query": request.query, "results": results}
+    return {
+        "project": _path_text(manifest.project),
+        "key": key,
+        "index_directory": str(index.directory),
+        **manifest.revision,
+        "query": request.query,
+        "results": results,
+    }
 
 
 def search_everywhere(store: Store, request: SearchRequest, model_location: str) -> dict:
     indexes, unrecognized = store.all(), store.unrecognized_directories()
     if not indexes and not unrecognized:
-        raise Failure("index_missing", "No indexes exist; run delphi-code index -p /absolute/path/to/project first", ExitCode.INDEX_STATE)
+        raise Failure(
+            "index_missing",
+            "No indexes exist; run delphi-code index -p /absolute/path/to/project first",
+            ExitCode.INDEX_STATE,
+        )
     if unrecognized:
-        raise Failure("index_incompatible", f"{unrecognized[0]}: Index has no valid project identity", ExitCode.INDEX_STATE)
+        raise Failure(
+            "index_incompatible", f"{unrecognized[0]}: Index has no valid project identity", ExitCode.INDEX_STATE
+        )
     model = open_model(model_location)
     query_vector = _query_vector(model, request)
     results, projects = [], []
@@ -105,13 +132,17 @@ def search_everywhere(store: Store, request: SearchRequest, model_location: str)
             with index.lock(False):
                 manifest = index.read_searchable_manifest(model)
                 project = _path_text(manifest.project)
-                results.extend({**row, "project": project, "key": index.key}
-                               for row in _search_index(index, manifest, request, query_vector))
+                results.extend(
+                    {**row, "project": project, "key": index.key}
+                    for row in _search_index(index, manifest, request, query_vector)
+                )
                 projects.append(project or index.key)
         except Failure as exc:
             raise Failure(exc.code, f"{index.directory}: {exc}", exc.exit_code) from exc
-    results.sort(key=lambda row: (row["distance"], row["key"], row["path"], row["start_line"], row["end_line"], row["text"]))
-    return {"project": None, "projects": sorted(projects), "query": request.query, "results": results[:request.limit]}
+    results.sort(
+        key=lambda row: (row["distance"], row["key"], row["path"], row["start_line"], row["end_line"], row["text"])
+    )
+    return {"project": None, "projects": sorted(projects), "query": request.query, "results": results[: request.limit]}
 
 
 def list_projects(store: Store, registry: Registry) -> dict:
@@ -121,31 +152,46 @@ def list_projects(store: Store, registry: Registry) -> dict:
     for key in sorted(set(tracked) | set(stored)):
         index, entry = stored.get(key), tracked.get(key)
         manifest = index.manifest if index else None
-        rows.append({
-            "key": key, "tracked": entry is not None, "source": entry.source if entry else None,
-            "project": _path_text(manifest.project) if manifest else None,
-            "index_directory": str(index.directory) if index else None,
-            "ready": manifest.ready if manifest else False, "indexed_at": manifest.indexed_at if manifest else None,
-            **(manifest.revision if manifest else {}),
-        })
+        rows.append(
+            {
+                "key": key,
+                "tracked": entry is not None,
+                "source": entry.source if entry else None,
+                "project": _path_text(manifest.project) if manifest else None,
+                "index_directory": str(index.directory) if index else None,
+                "ready": manifest.ready if manifest else False,
+                "indexed_at": manifest.indexed_at if manifest else None,
+                **(manifest.revision if manifest else {}),
+            }
+        )
     return {"registry": str(registry.path), "repos": rows}
 
 
 def remove_project(store: Store, registry: Registry, name: str, keep_index: bool) -> dict:
     with registry.edit() as entries:
         keys = [entry.current_key() for entry in entries]
-        candidates = [*zip(keys, (entry.local_directory for entry in entries)), *((index.key, index.project) for index in store.all())]
+        candidates = [
+            *zip(keys, (entry.local_directory for entry in entries), strict=True),
+            *((index.key, index.project) for index in store.all()),
+        ]
         key = match_key(name, candidates)
         if key is None:
             raise Failure("project_missing", f"No tracked project or index matches {name}", ExitCode.USAGE)
         untracked = key in keys
-        entries[:] = [entry for candidate, entry in zip(keys, entries) if candidate != key]
+        entries[:] = [entry for candidate, entry in zip(keys, entries, strict=True) if candidate != key]
         deleted = None if keep_index else _delete_index(store, key)
     return {"key": key, "untracked": untracked, "deleted_index": deleted}
 
 
-def add_sources(store: Store, registry: Registry, arguments: list[str], ref: str | None, selection: FileSelection,
-                model_location: str, sync_now: bool) -> dict:
+def add_sources(
+    store: Store,
+    registry: Registry,
+    arguments: list[str],
+    ref: str | None,
+    selection: FileSelection,
+    model_location: str,
+    sync_now: bool,
+) -> dict:
     added = []
     with registry.edit() as entries:
         keys = [entry.current_key() for entry in entries]
@@ -162,8 +208,9 @@ def add_sources(store: Store, registry: Registry, arguments: list[str], ref: str
     return sync(store, registry, added, model_location)
 
 
-def add_picked_repositories(store: Store, registry: Registry, ref: str | None, selection: FileSelection,
-                            model_location: str, sync_now: bool) -> dict:
+def add_picked_repositories(
+    store: Store, registry: Registry, ref: str | None, selection: FileSelection, model_location: str, sync_now: bool
+) -> dict:
     from .picker import RepositoryPicker
 
     tracked = {entry.current_key() for entry in registry.entries()}
@@ -195,8 +242,12 @@ def sync(store: Store, registry: Registry, entries: list[Entry], model_location:
     data = {"registry": str(registry.path), "repos": results}
     failed = [result["source"] for result in results if not result["ok"]]
     if failed:
-        raise Failure("sync_failed", f"{len(failed)} of {len(results)} tracked projects failed: {', '.join(failed)}",
-                      ExitCode.OPERATION, data)
+        raise Failure(
+            "sync_failed",
+            f"{len(failed)} of {len(results)} tracked projects failed: {', '.join(failed)}",
+            ExitCode.OPERATION,
+            data,
+        )
     return data
 
 
@@ -205,8 +256,13 @@ def _sync_entry(store: Store, entry: Entry, model: LocalModel) -> dict:
     revision = origin.latest_revision(entry.ref)
     index = store.get(origin.key) if revision else None
     if index and index.manifest.holds(revision.commit, entry.selection, model):
-        return {"unchanged": True, "project": None, "key": index.key, "index_directory": str(index.directory),
-                **index.manifest.revision}
+        return {
+            "unchanged": True,
+            "project": None,
+            "key": index.key,
+            "index_directory": str(index.directory),
+            **index.manifest.revision,
+        }
     with origin.checkout(entry.ref, revision) as checkout:
         return {"unchanged": False, **index_checkout(store, checkout, entry.selection, model)}
 
