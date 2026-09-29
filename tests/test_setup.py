@@ -52,9 +52,10 @@ class Setup(unittest.TestCase):
         self.assertEqual((destination / "model.safetensors").read_bytes(), b"corrupt")
 
     def test_failed_diagnostics_does_not_publish(self):
-        with patch(
-            "delphi_code.setup.diagnose", side_effect=Failure("broken", "diagnostic failed", ExitCode.OPERATION)
-        ), self.assertRaises(Failure):
+        with (
+            patch("delphi_code.setup.diagnose", side_effect=Failure("broken", "diagnostic failed", ExitCode.OPERATION)),
+            self.assertRaises(Failure),
+        ):
             provision(self.args.model, self.args.source)
         self.assertFalse(Path(self.args.model).exists())
         self.assertEqual(list(Path(self.args.model).parent.glob(".model-*")), [])
