@@ -144,10 +144,10 @@ Choose Bitbucket or GitHub (asked only when both have credentials), then a Bitbu
 
 | | Bitbucket Cloud | GitHub |
 |---|---|---|
-| Cloning | `BITBUCKET_USERNAME` and `BITBUCKET_APP_PASSWORD`, otherwise git's own credentials | `GITHUB_TOKEN` or `GH_TOKEN`, otherwise git's own credentials (`gh auth setup-git` configures them) |
+| Cloning | `BITBUCKET_APP_PASSWORD` with `BITBUCKET_USERNAME` or `BITBUCKET_EMAIL`, otherwise git's own credentials | `GITHUB_TOKEN` or `GH_TOKEN`, otherwise git's own credentials (`gh auth setup-git` configures them) |
 | Listing for the picker | The same variables (with `BITBUCKET_EMAIL` in place of the username when set), otherwise the credentials git has stored for bitbucket.org | `GITHUB_TOKEN` or `GH_TOKEN`, otherwise `gh auth token`, otherwise the token git has stored for github.com |
 
-Bitbucket has replaced app passwords with API tokens. An API token also works in `BITBUCKET_APP_PASSWORD`. Git over HTTPS takes the username that Bitbucket shows for it, and the REST API takes your Atlassian account email, which you set in `BITBUCKET_EMAIL`. Cloning and listing a workspace's repositories need the `read:repository:bitbucket` scope. Listing your workspaces also needs `read:workspace:bitbucket`; without it, the picker asks for the workspace name. An error names the credentials that were used and the scopes Bitbucket requires.
+Bitbucket has replaced app passwords with API tokens. An API token also works in `BITBUCKET_APP_PASSWORD`. With an API token, setting `BITBUCKET_EMAIL` to your Atlassian account email is enough: the REST API takes the email, and git clones with the token's own username, `x-bitbucket-api-token-auth`. The same happens when `BITBUCKET_USERNAME` holds an email. An app password needs your Bitbucket username in `BITBUCKET_USERNAME`. Cloning and listing a workspace's repositories need the `read:repository:bitbucket` scope. Listing your workspaces also needs `read:workspace:bitbucket`; without it, the picker asks for the workspace name. An error names the credentials that were used and the scopes Bitbucket requires.
 
 `DELPHI_CODE_BITBUCKET_GIT_BASE` and `DELPHI_CODE_GITHUB_GIT_BASE` send clones to another base URL, such as a mirror, and `DELPHI_CODE_BITBUCKET_API_BASE` and `DELPHI_CODE_GITHUB_API_BASE` do the same for the APIs. Result links still point to bitbucket.org and github.com.
 

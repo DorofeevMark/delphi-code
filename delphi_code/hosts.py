@@ -17,6 +17,7 @@ if __package__:
 PAGE_LENGTH = 100
 REQUEST_TIMEOUT_SECONDS = 60
 LISTING_TIMEOUT_SECONDS = 300
+API_TOKEN_GIT_USERNAME = "x-bitbucket-api-token-auth"
 
 
 class Owner(NamedTuple):
@@ -204,7 +205,13 @@ class Bitbucket(RepositoryHost):
 
     def clone_credentials(self):
         username, password = os.environ.get("BITBUCKET_USERNAME"), os.environ.get("BITBUCKET_APP_PASSWORD")
-        return (username, password) if username and password else None
+        if not password:
+            return None
+        if username and "@" not in username:
+            return username, password
+        if username or os.environ.get("BITBUCKET_EMAIL"):
+            return API_TOKEN_GIT_USERNAME, password
+        return None
 
     def _find_api_credentials(self):
         username_variable = "BITBUCKET_EMAIL" if os.environ.get("BITBUCKET_EMAIL") else "BITBUCKET_USERNAME"

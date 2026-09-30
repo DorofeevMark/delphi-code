@@ -39,7 +39,7 @@ class LocalHostWithApiRepository(unittest.TestCase):
                 },
             )
         )
-        for name in ("BITBUCKET_USERNAME", "BITBUCKET_APP_PASSWORD", "GITHUB_TOKEN", "GH_TOKEN"):
+        for name in ("BITBUCKET_USERNAME", "BITBUCKET_APP_PASSWORD", "BITBUCKET_EMAIL", "GITHUB_TOKEN", "GH_TOKEN"):
             os.environ.pop(name, None)
         git("init", "-q", "--bare", "-b", "main", str(self.base / "acme/api.git"))
         self.work = self.root / "work"
@@ -153,6 +153,15 @@ class RemoteGitCheckouts(LocalHostWithApiRepository):
             )
         command, answers = self.git_call_with_askpass_answers(GitRemoteSource(Bitbucket(), "acme", "api"))
         self.assertEqual((command[1], answers), ("ls-remote", None))
+
+    def test_bitbucket_api_token_with_email_clones_with_the_token_username(self):
+        for variables in (
+            {"BITBUCKET_EMAIL": "me@example.com", "BITBUCKET_APP_PASSWORD": "token"},
+            {"BITBUCKET_USERNAME": "me@example.com", "BITBUCKET_APP_PASSWORD": "token"},
+        ):
+            with self.subTest(variables=variables), patch.dict(os.environ, variables):
+                answers = self.git_call_with_askpass_answers(GitRemoteSource(Bitbucket(), "acme", "api"))[1]
+                self.assertEqual(answers, ["x-bitbucket-api-token-auth\n", "token\n"])
 
     def test_github_checkout_links_to_github(self):
         head = git("rev-parse", "HEAD", cwd=self.work)
