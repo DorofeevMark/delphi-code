@@ -2,10 +2,10 @@
 
 ## Development setup
 
-Use a Python 3.12 build that supports SQLite loadable extensions, such as a uv-managed one:
+Use a Python 3.12+ build that supports SQLite loadable extensions, such as a uv-managed one:
 
 ```sh
-uv venv --python 3.12 --managed-python .venv
+uv venv --managed-python .venv
 uv pip install -r requirements-lock.txt
 uv pip install --no-deps --no-build-isolation -e .
 uv pip install --group dev
