@@ -40,22 +40,18 @@ jobs:
   verify:
     needs: build
     runs-on: macos-14
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.12', '3.13', '3.14']
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.12'
       - uses: actions/download-artifact@v7
         with:
           name: distributions
           path: dist
       - name: Install release wheel with dependencies
         run: |
-          uv venv --python ${{ matrix.python-version }} --managed-python .venv
+          uv venv --python 3.12 --managed-python .venv
           uv pip install dist/*.whl
       - name: Lint and type-check
         run: |

@@ -5,7 +5,7 @@ Offline semantic code search for agents. Delphi Code is a small Python CLI that 
 ## Quick start
 
 ```sh
-uv tool install --managed-python delphi-code
+uv tool install --python 3.12 --managed-python delphi-code
 delphi-code setup
 delphi-code index -p /absolute/path/to/project
 delphi-code search 'where are user passwords checked?'
@@ -16,7 +16,7 @@ delphi-code search 'where are user passwords checked?'
 ## Requirements
 
 - macOS 14 or later on arm64 (the tested target). Linux has not yet been verified; Windows is not supported by the current file locking implementation.
-- CPython 3.12 or later (tested on 3.12, 3.13 and 3.14) with SQLite loadable extensions. Some python.org macOS builds disable that feature; `--managed-python` makes uv use its own Python build, which supports it. `doctor` reports this explicitly.
+- CPython 3.12 with SQLite loadable extensions. Some python.org macOS builds disable that feature; `--managed-python` makes uv use its own Python build, which supports it. `doctor` reports this explicitly.
 - CPU inference; no GPU is needed.
 
 ## Installation
@@ -24,21 +24,21 @@ delphi-code search 'where are user passwords checked?'
 From PyPI, as in the quick start:
 
 ```sh
-uv tool install --managed-python delphi-code
+uv tool install --python 3.12 --managed-python delphi-code
 delphi-code setup
 ```
 
 From a checkout, with uv:
 
 ```sh
-uv tool install --managed-python /absolute/path/to/delphi-code
+uv tool install --python 3.12 --managed-python /absolute/path/to/delphi-code
 delphi-code setup
 ```
 
-From a checkout, with the pinned dependency versions and a Python 3.12+ build that supports SQLite extensions:
+From a checkout, with the pinned dependency versions and a Python 3.12 build that supports SQLite extensions:
 
 ```sh
-python3 -m venv .venv
+python3.12 -m venv .venv
 .venv/bin/python -m pip install -r requirements-lock.txt
 .venv/bin/python -m pip install --no-deps --no-build-isolation .
 .venv/bin/delphi-code setup
