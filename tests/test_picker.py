@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from typing import NamedTuple
 import unittest
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
@@ -15,7 +16,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
 from delphi_code import hosts
-from delphi_code.errors import Failure
+from delphi_code.errors import ExitCode, Failure
 from delphi_code.hosts import Bitbucket, GitHub, Owner, Repository, configured_hosts
 from delphi_code.picker import RepositoryPicker, TrackingChanges
 
@@ -29,11 +30,17 @@ def answering(value):
 class FakeHost:
     owner_noun = "workspace"
 
-    def __init__(self, owners, repositories, name="Bitbucket"):
+    def __init__(self, owners, repositories, name="Bitbucket", suggested_owner=None):
         self._owners, self._repositories, self.name = owners, repositories, name
+        self._suggested_owner = suggested_owner
 
     def owners(self):
+        if isinstance(self._owners, Failure):
+            raise self._owners
         return self._owners
+
+    def suggested_owner(self):
+        return self._suggested_owner
 
     def repositories(self, owner):
         return [repository for repository in self._repositories if repository.owner == owner]
@@ -108,6 +115,28 @@ class Picking(unittest.TestCase):
         with patch("questionary.select", answering(None)):
             self.assertIsNone(two_hosts.choose(set()))
 
+    def test_owner_is_typed_when_listing_owners_is_forbidden(self):
+        forbidden = Failure("remote_permission_denied", "lacks read:workspace:bitbucket", ExitCode.OPERATION)
+        host = FakeHost(forbidden, ACME, suggested_owner="acme")
+        with (
+            patch("questionary.text", answering("  acme ")) as text,
+            patch("questionary.checkbox", answering(["bitbucket.org/acme/api"])),
+            patch("questionary.confirm", answering(True)),
+        ):
+            changes = RepositoryPicker([host], terminal={}).choose(set())
+        self.assertEqual(text.call_args.kwargs["default"], "acme")
+        self.assertEqual(changes, TrackingChanges(["bitbucket.org/acme/api"], []))
+        for cancelled in (None, "   "):
+            with patch("questionary.text", answering(cancelled)):
+                self.assertIsNone(RepositoryPicker([FakeHost(forbidden, ACME)], terminal={}).choose(set()))
+
+    def test_other_listing_failures_are_not_turned_into_questions(self):
+        unavailable = Failure("remote_unavailable", "down", ExitCode.OPERATION)
+        with patch("questionary.text") as text, self.assertRaises(Failure) as raised:
+            RepositoryPicker([FakeHost(unavailable, ACME)], terminal={}).choose(set())
+        self.assertEqual(raised.exception.code, "remote_unavailable")
+        text.assert_not_called()
+
     def test_unchanged_selection_needs_no_confirmation(self):
         with (
             patch("questionary.checkbox", answering(["bitbucket.org/acme/api"])),
@@ -165,6 +194,20 @@ class FakeResponse(io.BytesIO):
         self.headers = {"Link": link}
 
 
+class HttpFailure(NamedTuple):
+    status: int
+    body: object = None
+
+
+BITBUCKET_SCOPE_ERROR = {
+    "type": "error",
+    "error": {
+        "message": "Your credentials lack one or more required privilege scopes.",
+        "detail": {"granted": ["repository"], "required": ["account"]},
+    },
+}
+
+
 class HostListingScript(unittest.TestCase):
     def setUp(self):
         self.enterContext(
@@ -184,8 +227,10 @@ class HostListingScript(unittest.TestCase):
         def urlopen(request, timeout, context):
             requests.append(request)
             page = pages_by_path[urlsplit(request.full_url).path]
-            if isinstance(page, int):
-                raise HTTPError(request.full_url, page, "Refused", {}, io.BytesIO())
+            if isinstance(page, HttpFailure):
+                raise HTTPError(
+                    request.full_url, page.status, "Refused", {}, io.BytesIO(json.dumps(page.body).encode())
+                )
             return page if isinstance(page, FakeResponse) else FakeResponse(page)
 
         self.enterContext(patch.object(hosts, "urlopen", side_effect=urlopen))
@@ -218,20 +263,6 @@ class HostListingScript(unittest.TestCase):
         )
         self.assertEqual(requests[0].get_header("Authorization"), "Basic bWU6cHc=")
 
-    def test_bitbucket_workspaces_fall_back_to_the_permissions_endpoint(self):
-        self.serve(
-            {
-                "/2.0/user/workspaces": 410,
-                "/2.0/user/permissions/workspaces": {
-                    "values": [{"workspace": {"slug": "zeta", "name": "Zeta"}}, {"workspace": {"slug": "acme"}}]
-                },
-            }
-        )
-        self.assertEqual(
-            self.listed("bitbucket.org", "owners"),
-            (0, [{"slug": "acme", "name": "acme"}, {"slug": "zeta", "name": "Zeta"}]),
-        )
-
     def test_github_pages_follow_link_headers(self):
         self.serve(
             {
@@ -252,10 +283,29 @@ class HostListingScript(unittest.TestCase):
         )
 
     def test_http_errors_are_reported_as_json(self):
-        self.serve({"/2.0/user/workspaces": 401})
+        self.serve({"/2.0/user/workspaces": HttpFailure(401)})
         self.assertEqual(
-            self.listed("bitbucket.org", "owners"), (1, {"error": {"status": 401, "message": "HTTP 401 Refused"}})
+            self.listed("bitbucket.org", "owners"),
+            (1, {"error": {"status": 401, "path": "/2.0/user/workspaces", "message": "HTTP 401 Refused"}}),
         )
+
+    def test_bitbucket_scope_errors_name_the_missing_scopes(self):
+        self.serve(
+            {
+                "/2.0/user/workspaces": HttpFailure(403, BITBUCKET_SCOPE_ERROR),
+            }
+        )
+        code, output = self.listed("bitbucket.org", "owners")
+        self.assertEqual((code, output["error"]["status"], output["error"]["path"]), (1, 403, "/2.0/user/workspaces"))
+        self.assertEqual(
+            output["error"]["message"],
+            "HTTP 403 Your credentials lack one or more required privilege scopes. (granted: repository; required: account)",
+        )
+
+    def test_github_error_messages_are_reported(self):
+        self.serve({"/user/repos": HttpFailure(403, {"message": "Resource not accessible by personal access token"})})
+        _, output = self.listed("github.com", "repositories")
+        self.assertEqual(output["error"]["message"], "HTTP 403 Resource not accessible by personal access token")
 
 
 class Hosts(unittest.TestCase):
@@ -305,6 +355,24 @@ class Hosts(unittest.TestCase):
             Bitbucket("Basic x").owners()
         self.assertEqual(raised.exception.code, "remote_auth_failed")
         self.assertIn("BITBUCKET_EMAIL", str(raised.exception))
+
+    def test_forbidden_listing_names_the_credentials_used_and_the_scopes_needed(self):
+        self.isolate_git_and_gh().write_text("https://stored-user:stored-pass@bitbucket.org\n")
+        bitbucket = Bitbucket()
+        self.assertTrue(bitbucket.has_api_credentials())
+        forbidden = subprocess.CompletedProcess(
+            [],
+            1,
+            json.dumps({"error": {"status": 403, "path": "/2.0/user/workspaces", "message": "HTTP 403 lacks scopes"}}),
+            "",
+        )
+        with patch("delphi_code.hosts.subprocess.run", return_value=forbidden), self.assertRaises(Failure) as raised:
+            bitbucket.owners()
+        self.assertEqual(raised.exception.code, "remote_permission_denied")
+        message = str(raised.exception)
+        self.assertIn("accepted the git credentials stored for bitbucket.org but refused /2.0/user/workspaces", message)
+        self.assertIn("read:workspace:bitbucket", message)
+        self.assertNotIn("BITBUCKET_EMAIL", message)
 
     def authorization_sent(self, host):
         self.assertTrue(host.has_api_credentials())

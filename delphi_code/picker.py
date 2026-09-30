@@ -78,7 +78,12 @@ class RepositoryPicker:
     def _choose_owner(self, host):
         import questionary
 
-        owners = host.owners()
+        try:
+            owners = host.owners()
+        except Failure as failure:
+            if failure.code != "remote_permission_denied":
+                raise
+            return self._type_owner(host)
         if not owners:
             raise Failure("remote_empty", f"Your {host.name} account has no repositories", ExitCode.USAGE)
         if len(owners) == 1:
@@ -90,6 +95,16 @@ class RepositoryPicker:
             use_jk_keys=False,
             **self._terminal,
         ).ask()
+
+    def _type_owner(self, host):
+        import questionary
+
+        answer = questionary.text(
+            f"These credentials cannot list {host.name} {host.owner_noun}s. {host.name} {host.owner_noun} to index:",
+            default=host.suggested_owner() or "",
+            **self._terminal,
+        ).ask()
+        return (answer or "").strip() or None
 
     def _choose_repositories(self, owner, repositories, tracked_keys):
         import questionary
