@@ -110,7 +110,8 @@ class GitRemoteSource:
         return Revision(branch, commit)
 
     def _named_revision(self, ref):
-        commits = dict((name, value) for value, name in self._remote_refs(f"refs/heads/{ref}", f"refs/tags/{ref}"))
+        advertised = self._remote_refs(f"refs/heads/{ref}", f"refs/tags/{ref}", f"refs/tags/{ref}^{{}}")
+        commits = dict((name, value) for value, name in advertised)
         commit = (
             commits.get(f"refs/heads/{ref}") or commits.get(f"refs/tags/{ref}^{{}}") or commits.get(f"refs/tags/{ref}")
         )

@@ -49,7 +49,8 @@ class LocalHostWithApiRepository(unittest.TestCase):
         git("config", "user.name", "Test", cwd=self.work)
         self.commit("parse.py", "def parse(text):\n    return text\n")
         git("tag", "v1", cwd=self.work)
-        git("push", "-q", "origin", "main", "v1", cwd=self.work)
+        git("tag", "--annotate", "v1-annotated", "--message", "release", cwd=self.work)
+        git("push", "-q", "origin", "main", "v1", "v1-annotated", cwd=self.work)
 
     def commit(self, name, text):
         (self.work / name).write_text(text)
@@ -98,6 +99,7 @@ class RemoteGitCheckouts(LocalHostWithApiRepository):
         head = git("rev-parse", "HEAD", cwd=self.work)
         self.assertEqual(source.latest_revision(None), ("main", head))
         self.assertEqual(source.latest_revision("v1"), ("v1", head))
+        self.assertEqual(source.latest_revision("v1-annotated"), ("v1-annotated", head))
         with self.assertRaises(Failure) as raised:
             source.latest_revision("missing")
         self.assertEqual(raised.exception.code, "remote_ref_missing")
