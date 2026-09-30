@@ -16,7 +16,7 @@ delphi-code search 'where are user passwords checked?'
 ## Requirements
 
 - macOS 14 or later on arm64 (the tested target). Linux has not yet been verified; Windows is not supported by the current file locking implementation.
-- CPython 3.12 or later (CI tests 3.12) with SQLite loadable extensions. Some python.org macOS builds disable that feature; `--managed-python` makes uv use its own Python build, which supports it. `doctor` reports this explicitly.
+- CPython 3.12 or later (tested on 3.12, 3.13 and 3.14) with SQLite loadable extensions. Some python.org macOS builds disable that feature; `--managed-python` makes uv use its own Python build, which supports it. `doctor` reports this explicitly.
 - CPU inference; no GPU is needed.
 
 ## Installation
