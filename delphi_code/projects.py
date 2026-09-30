@@ -219,12 +219,14 @@ def add_picked_repositories(
         return {"registry": str(registry.path), "cancelled": True, "repos": [], "removed": []}
     added = [Entry(key, selection=selection, ref=ref) for key in changes.added]
     with registry.edit() as entries:
-        entries[:] = [entry for entry in entries if entry.current_key() not in changes.removed] + added
+        kept = [entry for entry in entries if entry.current_key() not in changes.removed]
+        entries[:] = kept + added
     removed = [{"key": key, "deleted_index": _delete_index(store, key)} for key in changes.removed]
     if not sync_now:
         return {"registry": str(registry.path), "cancelled": False, "repos": _summaries(added), "removed": removed}
+    never_indexed = [entry for entry in kept if not _has_ready_index(store, entry)]
     try:
-        return {**sync(store, registry, added, model_location), "cancelled": False, "removed": removed}
+        return {**sync(store, registry, never_indexed + added, model_location), "cancelled": False, "removed": removed}
     except Failure as failure:
         failure.data = {**(failure.data or {}), "cancelled": False, "removed": removed}
         raise
@@ -277,6 +279,11 @@ def _entry_for(origin: Source, ref: str | None, selection: FileSelection) -> Ent
     if ref:
         raise Failure("usage", f"--ref applies only to remote repositories, not {origin.path}", ExitCode.USAGE)
     return Entry(str(origin.path), origin.key, selection)
+
+
+def _has_ready_index(store: Store, entry: Entry) -> bool:
+    index = store.get(entry.current_key())
+    return index is not None and index.manifest.ready
 
 
 def _summaries(entries: list[Entry]) -> list[dict]:

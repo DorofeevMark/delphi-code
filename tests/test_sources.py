@@ -263,6 +263,14 @@ class RemoteSync(LocalHostWithApiRepository):
         self.assertEqual([entry.source for entry in Registry().entries()], [str(self.work)])
         self.assertFalse(index_directory.exists())
 
+    def test_pick_retries_tracked_repositories_whose_first_index_failed(self):
+        self.run_command("add", "bitbucket.org/acme/api", "--no-sync")
+        self.pick(TrackingChanges([], []))
+        retried = self.run_command("add")
+        self.assertEqual([repo["key"] for repo in retried["repos"]], ["bitbucket.org/acme/api"])
+        self.assertEqual(self.run_command("add")["repos"], [])
+        self.assertEqual(len(self.checkouts), 1)
+
     def test_cancelled_pick_changes_nothing(self):
         self.pick(None)
         self.assertEqual(self.run_command("add")["cancelled"], True)
