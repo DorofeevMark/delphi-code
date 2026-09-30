@@ -2,8 +2,7 @@ import sys
 from typing import NamedTuple
 
 from .errors import ExitCode, Failure
-
-DESCRIPTION_WIDTH = 60
+from .repository_list import ask_repositories
 
 
 class TrackingChanges(NamedTuple):
@@ -107,21 +106,7 @@ class RepositoryPicker:
         return (answer or "").strip() or None
 
     def _choose_repositories(self, owner, repositories, tracked_keys):
-        import questionary
-
-        chosen = questionary.checkbox(
-            f"Repositories to index in {owner} (space toggles, type to filter)",
-            choices=[
-                questionary.Choice(
-                    _repository_title(repository), repository.key, checked=repository.key in tracked_keys
-                )
-                for repository in repositories
-            ],
-            use_search_filter=True,
-            use_jk_keys=False,
-            **self._terminal,
-        ).ask()
-        return None if chosen is None else set(chosen)
+        return ask_repositories(f"Repositories to index in {owner}", repositories, tracked_keys, self._terminal)
 
     def _confirm(self, changes):
         import questionary
@@ -132,13 +117,6 @@ class RepositoryPicker:
 
 def _owner_title(owner):
     return owner.slug if owner.name == owner.slug else f"{owner.name} ({owner.slug})"
-
-
-def _repository_title(repository):
-    description = repository.description.splitlines()[0] if repository.description else ""
-    if len(description) > DESCRIPTION_WIDTH:
-        description = description[: DESCRIPTION_WIDTH - 1] + "…"
-    return f"{repository.slug}{' (private)' if repository.private else ''}{'  ' + description if description else ''}"
 
 
 def _stderr_terminal():

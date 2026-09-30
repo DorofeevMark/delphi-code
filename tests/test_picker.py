@@ -19,12 +19,17 @@ from delphi_code import hosts
 from delphi_code.errors import ExitCode, Failure
 from delphi_code.hosts import Bitbucket, GitHub, Owner, Repository, configured_hosts
 from delphi_code.picker import RepositoryPicker, TrackingChanges
+from delphi_code.repository_list import RepositoryList, repository_title
 
 CREDENTIAL_VARIABLES = ("BITBUCKET_USERNAME", "BITBUCKET_APP_PASSWORD", "BITBUCKET_EMAIL", "GITHUB_TOKEN", "GH_TOKEN")
 
 
 def answering(value):
     return MagicMock(return_value=MagicMock(ask=MagicMock(return_value=value)))
+
+
+def choosing(keys):
+    return patch("delphi_code.picker.ask_repositories", return_value=None if keys is None else set(keys))
 
 
 class FakeHost:
@@ -62,7 +67,7 @@ class Picking(unittest.TestCase):
     def test_changes_only_touch_the_listed_owner(self):
         tracked = {"bitbucket.org/acme/api", "bitbucket.org/acme/web", "bitbucket.org/other/tool"}
         with (
-            patch("questionary.checkbox", answering(["bitbucket.org/acme/api", "bitbucket.org/acme/billing"])),
+            choosing(["bitbucket.org/acme/api", "bitbucket.org/acme/billing"]),
             patch("questionary.confirm", answering(True)),
         ):
             changes = picker([Owner("acme", "Acme")]).choose(tracked)
@@ -71,28 +76,20 @@ class Picking(unittest.TestCase):
     def test_single_host_and_owner_skip_their_questions(self):
         with (
             patch("questionary.select") as select,
-            patch("questionary.checkbox", answering(["bitbucket.org/acme/web"])) as checkbox,
+            choosing(["bitbucket.org/acme/web"]) as ask,
             patch("questionary.confirm", answering(True)),
         ):
             changes = picker([Owner("acme", "Acme")]).choose({"bitbucket.org/acme/api"})
         select.assert_not_called()
         self.assertEqual(changes, TrackingChanges(["bitbucket.org/acme/web"], ["bitbucket.org/acme/api"]))
-        choices = checkbox.call_args.kwargs["choices"]
-        self.assertEqual(
-            [(choice.title, choice.value, choice.checked) for choice in choices],
-            [
-                ("api  Public API", "bitbucket.org/acme/api", True),
-                ("billing (private)", "bitbucket.org/acme/billing", False),
-                ("web", "bitbucket.org/acme/web", False),
-            ],
-        )
+        self.assertEqual(ask.call_args.args[:3], ("Repositories to index in acme", ACME, {"bitbucket.org/acme/api"}))
 
     def test_several_hosts_are_offered_first(self):
         bitbucket = FakeHost([Owner("acme", "Acme")], ACME)
         github = FakeHost([Owner("octo", "octo")], OCTO, name="GitHub")
         with (
             patch("questionary.select", answering(github)) as select,
-            patch("questionary.checkbox", answering(["github.com/octo/tools"])),
+            choosing(["github.com/octo/tools"]),
             patch("questionary.confirm", answering(True)),
         ):
             changes = RepositoryPicker([bitbucket, github], terminal={}).choose(set())
@@ -103,11 +100,11 @@ class Picking(unittest.TestCase):
         two_owners = picker([Owner("acme", "Acme"), Owner("other", "Other")])
         with patch("questionary.select", answering(None)):
             self.assertIsNone(two_owners.choose(set()))
-        with patch("questionary.select", answering("acme")), patch("questionary.checkbox", answering(None)):
+        with patch("questionary.select", answering("acme")), choosing(None):
             self.assertIsNone(two_owners.choose(set()))
         with (
             patch("questionary.select", answering("acme")),
-            patch("questionary.checkbox", answering(["bitbucket.org/acme/api"])),
+            choosing(["bitbucket.org/acme/api"]),
             patch("questionary.confirm", answering(False)),
         ):
             self.assertIsNone(two_owners.choose(set()))
@@ -120,7 +117,7 @@ class Picking(unittest.TestCase):
         host = FakeHost(forbidden, ACME, suggested_owner="acme")
         with (
             patch("questionary.text", answering("  acme ")) as text,
-            patch("questionary.checkbox", answering(["bitbucket.org/acme/api"])),
+            choosing(["bitbucket.org/acme/api"]),
             patch("questionary.confirm", answering(True)),
         ):
             changes = RepositoryPicker([host], terminal={}).choose(set())
@@ -139,7 +136,7 @@ class Picking(unittest.TestCase):
 
     def test_unchanged_selection_needs_no_confirmation(self):
         with (
-            patch("questionary.checkbox", answering(["bitbucket.org/acme/api"])),
+            choosing(["bitbucket.org/acme/api"]),
             patch("questionary.confirm") as confirm,
         ):
             self.assertEqual(
@@ -155,7 +152,7 @@ class Picking(unittest.TestCase):
             picker([Owner("acme", "Acme")], []).choose(set())
         self.assertEqual(raised.exception.code, "remote_empty")
 
-    def test_real_checkbox_reads_keys_from_the_given_terminal(self):
+    def test_real_list_reads_keys_from_the_given_terminal(self):
         with create_pipe_input() as keys:
             keys.send_text("bill")
             keys.send_text(" ")
@@ -166,11 +163,12 @@ class Picking(unittest.TestCase):
                 )
         self.assertEqual(changes, TrackingChanges(["bitbucket.org/acme/billing"], []))
 
-    def test_long_descriptions_are_shortened_to_their_first_line(self):
-        long = Repository("bitbucket.org", "acme", "x", "a" * 80 + "\nsecond line", False)
-        with patch("questionary.checkbox", answering(None)) as checkbox:
-            picker([Owner("acme", "Acme")], [long]).choose(set())
-        self.assertEqual(checkbox.call_args.kwargs["choices"][0].title, "x  " + "a" * 59 + "…")
+    def test_real_list_cancels_on_escape(self):
+        with create_pipe_input() as keys:
+            keys.send_text(" \x1b")
+            self.assertIsNone(
+                picker([Owner("acme", "Acme")], terminal={"input": keys, "output": DummyOutput()}).choose(set())
+            )
 
     def test_needs_a_terminal_before_asking_for_credentials(self):
         with (
@@ -186,6 +184,59 @@ class Picking(unittest.TestCase):
         with patch("delphi_code.hosts.configured_hosts", return_value=[]), self.assertRaises(Failure) as raised:
             RepositoryPicker(terminal={})
         self.assertEqual(raised.exception.code, "remote_auth_missing")
+
+
+def numbered_repositories(count):
+    return [Repository("bitbucket.org", "acme", f"repo-{number:04}", "", False) for number in range(count)]
+
+
+class Listing(unittest.TestCase):
+    def test_only_one_page_is_visible(self):
+        listing = RepositoryList(numbered_repositories(3000), set(), page_size=20)
+        self.assertEqual((len(listing.visible()), listing.page_count), (20, 150))
+        listing.turn_page(1)
+        listing.move(-1)
+        self.assertEqual((listing.page, listing.cursor), (0, 19))
+        listing.go_to_last()
+        self.assertEqual(
+            [repository.slug for repository, _, _ in listing.visible()], [f"repo-{n}" for n in range(2980, 3000)]
+        )
+
+    def test_filter_ranks_slug_matches_before_description_matches(self):
+        listing = RepositoryList(
+            [
+                Repository("bitbucket.org", "acme", "web", "Talks to the billing API", False),
+                Repository("bitbucket.org", "acme", "Billing", "", True),
+                Repository("bitbucket.org", "acme", "api", "", False),
+            ],
+            set(),
+        )
+        listing.type("BILL")
+        self.assertEqual([repository.slug for repository in listing.matches], ["Billing", "web"])
+        listing.erase()
+        listing.type("x")
+        self.assertEqual(listing.matches, [])
+        listing.clear()
+        self.assertEqual(len(listing.matches), 3)
+
+    def test_toggling_all_matches_and_showing_only_selected(self):
+        listing = RepositoryList(numbered_repositories(30), {"bitbucket.org/acme/repo-0001"})
+        listing.type("repo-001")
+        listing.toggle_all_matches()
+        self.assertEqual(len(listing.chosen_keys), 11)
+        listing.clear()
+        listing.toggle_only_chosen()
+        self.assertEqual(len(listing.matches), 11)
+        listing.toggle_current()
+        self.assertNotIn("bitbucket.org/acme/repo-0001", listing.chosen_keys)
+        listing.type("repo-001")
+        listing.toggle_all_matches()
+        self.assertEqual(listing.chosen_keys, set())
+
+    def test_long_descriptions_are_shortened_to_their_first_line(self):
+        long = Repository("bitbucket.org", "acme", "x", "a" * 80 + "\nsecond line", False)
+        self.assertEqual(repository_title(long), "x  " + "a" * 59 + "…")
+        self.assertEqual(repository_title(ACME[1]), "billing (private)")
 
 
 class FakeResponse(io.BytesIO):
