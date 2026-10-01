@@ -13,6 +13,7 @@ import tempfile
 from .errors import ExitCode, Failure
 from .model import is_incidental_asset
 from .paths import index_root
+from .progress import SILENT, Progress, Stage
 from .store import Store
 
 PROVENANCE_FILE = Path(__file__).with_name("model_provenance.json")
@@ -46,13 +47,15 @@ def download(destination: Path):
     result = subprocess.run(
         [sys.executable, str(DOWNLOADER), str(destination)],
         env=env,
-        stdout=sys.stderr,
-        stderr=sys.stderr,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
     )
     if result.returncode:
+        last_error_line = (result.stderr or "").strip().splitlines()[-1:] or [f"exited with {result.returncode}"]
         raise Failure(
             "setup_download_failed",
-            "Model download failed; check connectivity and rerun delphi-code setup, or use delphi-code setup --from /path/to/model",
+            f"Model download failed ({last_error_line[0]}); check connectivity and rerun delphi-code setup, or use delphi-code setup --from /path/to/model",
             ExitCode.RUNTIME_ASSETS,
         )
 
@@ -70,8 +73,9 @@ def diagnose(model: Path) -> dict:
     return run_doctor(str(model), Store(), str(Path.cwd()))
 
 
-def provision(model_location: str, import_from: str | None = None) -> dict:
+def provision(model_location: str, import_from: str | None = None, progress: Progress = SILENT) -> dict:
     destination = Path(model_location).expanduser().resolve()
+    progress.model_setup_started(destination)
     source = Path(import_from).expanduser().resolve() if import_from else None
     destination.parent.mkdir(parents=True, exist_ok=True)
     with (destination.parent / f".{destination.name}.setup.lock").open("a") as lock:
@@ -82,6 +86,7 @@ def provision(model_location: str, import_from: str | None = None) -> dict:
                 "setup_busy", "Another setup is running for this model; retry when it finishes", ExitCode.OPERATION
             ) from exc
         if destination.exists():
+            progress.stage_started(Stage.VERIFYING_MODEL)
             try:
                 verify_assets(destination)
             except Failure as exc:
@@ -90,22 +95,27 @@ def provision(model_location: str, import_from: str | None = None) -> dict:
                     f"{exc}. Existing assets were preserved. Move {destination} aside, then rerun delphi-code setup --model {shlex.quote(str(destination))}",
                     ExitCode.RUNTIME_ASSETS,
                 ) from exc
+            progress.stage_started(Stage.CHECKING_INSTALLATION)
             diagnostics = diagnose(destination)
             reused = True
         else:
             with tempfile.TemporaryDirectory(prefix=f".{destination.name}-", dir=destination.parent) as temporary:
                 staged = Path(temporary) / "model"
                 if source:
+                    progress.stage_started(Stage.COPYING_MODEL)
                     verify_assets(source)
                     shutil.copytree(source, staged, ignore=shutil.ignore_patterns(".*"))
                 else:
+                    progress.stage_started(Stage.DOWNLOADING_MODEL)
                     staged.mkdir()
-                    print("Downloading the pinned MiniLM model…", file=sys.stderr)
                     download(staged)
+                progress.stage_started(Stage.VERIFYING_MODEL)
                 provenance = verify_assets(staged)
                 (staged / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+                progress.stage_started(Stage.CHECKING_INSTALLATION)
                 diagnostics = diagnose(staged)
                 staged.rename(destination)
             diagnostics["model"] = str(destination)
             reused = False
+    progress.model_setup_finished(reused)
     return {"model": str(destination), "index_root": str(index_root()), "reused": reused, "diagnostics": diagnostics}

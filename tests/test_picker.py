@@ -15,11 +15,13 @@ from urllib.parse import urlsplit
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
-from delphi_code import hosts
+from delphi_code import controllers, hosts
 from delphi_code.errors import ExitCode, Failure
 from delphi_code.hosts import Bitbucket, GitHub, Owner, Repository, configured_hosts
-from delphi_code.picker import RepositoryPicker, TrackingChanges
-from delphi_code.repository_list import RepositoryList, repository_title
+from delphi_code.progress import SILENT, Progress
+from delphi_code.projects import TrackingChanges
+from delphi_code.ui.prompts import TerminalPrompts
+from delphi_code.ui.repository_list import RepositoryList, repository_title
 
 CREDENTIAL_VARIABLES = ("BITBUCKET_USERNAME", "BITBUCKET_APP_PASSWORD", "BITBUCKET_EMAIL", "GITHUB_TOKEN", "GH_TOKEN")
 
@@ -29,7 +31,7 @@ def answering(value):
 
 
 def choosing(keys):
-    return patch("delphi_code.picker.ask_repositories", return_value=None if keys is None else set(keys))
+    return patch("delphi_code.ui.prompts.ask_repositories", return_value=None if keys is None else set(keys))
 
 
 class FakeHost:
@@ -59,8 +61,13 @@ ACME = [
 OCTO = [Repository("github.com", "octo", "tools", "", False)]
 
 
-def picker(owners, repositories=ACME, terminal=None):
-    return RepositoryPicker([FakeHost(owners, repositories)], terminal={} if terminal is None else terminal)
+def pick(hosts, tracked_keys, terminal=None):
+    prompts = TerminalPrompts({} if terminal is None else terminal)
+    return controllers.pick_tracking_changes(hosts, tracked_keys, prompts, SILENT)
+
+
+def pick_from(owners, tracked_keys, repositories=ACME, terminal=None):
+    return pick([FakeHost(owners, repositories)], tracked_keys, terminal)
 
 
 class Picking(unittest.TestCase):
@@ -70,7 +77,7 @@ class Picking(unittest.TestCase):
             choosing(["bitbucket.org/acme/api", "bitbucket.org/acme/billing"]),
             patch("questionary.confirm", answering(True)),
         ):
-            changes = picker([Owner("acme", "Acme")]).choose(tracked)
+            changes = pick_from([Owner("acme", "Acme")], tracked)
         self.assertEqual(changes, TrackingChanges(["bitbucket.org/acme/billing"], ["bitbucket.org/acme/web"]))
 
     def test_single_host_and_owner_skip_their_questions(self):
@@ -79,7 +86,7 @@ class Picking(unittest.TestCase):
             choosing(["bitbucket.org/acme/web"]) as ask,
             patch("questionary.confirm", answering(True)),
         ):
-            changes = picker([Owner("acme", "Acme")]).choose({"bitbucket.org/acme/api"})
+            changes = pick_from([Owner("acme", "Acme")], {"bitbucket.org/acme/api"})
         select.assert_not_called()
         self.assertEqual(changes, TrackingChanges(["bitbucket.org/acme/web"], ["bitbucket.org/acme/api"]))
         self.assertEqual(ask.call_args.args[:3], ("Repositories to index in acme", ACME, {"bitbucket.org/acme/api"}))
@@ -92,25 +99,25 @@ class Picking(unittest.TestCase):
             choosing(["github.com/octo/tools"]),
             patch("questionary.confirm", answering(True)),
         ):
-            changes = RepositoryPicker([bitbucket, github], terminal={}).choose(set())
+            changes = pick([bitbucket, github], set())
         self.assertEqual([choice.title for choice in select.call_args.kwargs["choices"]], ["Bitbucket", "GitHub"])
         self.assertEqual(changes, TrackingChanges(["github.com/octo/tools"], []))
 
     def test_cancelling_any_question_changes_nothing(self):
-        two_owners = picker([Owner("acme", "Acme"), Owner("other", "Other")])
+        two_owners = [FakeHost([Owner("acme", "Acme"), Owner("other", "Other")], ACME)]
         with patch("questionary.select", answering(None)):
-            self.assertIsNone(two_owners.choose(set()))
+            self.assertIsNone(pick(two_owners, set()))
         with patch("questionary.select", answering("acme")), choosing(None):
-            self.assertIsNone(two_owners.choose(set()))
+            self.assertIsNone(pick(two_owners, set()))
         with (
             patch("questionary.select", answering("acme")),
             choosing(["bitbucket.org/acme/api"]),
             patch("questionary.confirm", answering(False)),
         ):
-            self.assertIsNone(two_owners.choose(set()))
-        two_hosts = RepositoryPicker([FakeHost([], []), FakeHost([], [], name="GitHub")], terminal={})
+            self.assertIsNone(pick(two_owners, set()))
+        two_hosts = [FakeHost([], []), FakeHost([], [], name="GitHub")]
         with patch("questionary.select", answering(None)):
-            self.assertIsNone(two_hosts.choose(set()))
+            self.assertIsNone(pick(two_hosts, set()))
 
     def test_owner_is_typed_when_listing_owners_is_forbidden(self):
         forbidden = Failure("remote_permission_denied", "lacks read:workspace:bitbucket", ExitCode.OPERATION)
@@ -120,17 +127,17 @@ class Picking(unittest.TestCase):
             choosing(["bitbucket.org/acme/api"]),
             patch("questionary.confirm", answering(True)),
         ):
-            changes = RepositoryPicker([host], terminal={}).choose(set())
+            changes = pick([host], set())
         self.assertEqual(text.call_args.kwargs["default"], "acme")
         self.assertEqual(changes, TrackingChanges(["bitbucket.org/acme/api"], []))
         for cancelled in (None, "   "):
             with patch("questionary.text", answering(cancelled)):
-                self.assertIsNone(RepositoryPicker([FakeHost(forbidden, ACME)], terminal={}).choose(set()))
+                self.assertIsNone(pick([FakeHost(forbidden, ACME)], set()))
 
     def test_other_listing_failures_are_not_turned_into_questions(self):
         unavailable = Failure("remote_unavailable", "down", ExitCode.OPERATION)
         with patch("questionary.text") as text, self.assertRaises(Failure) as raised:
-            RepositoryPicker([FakeHost(unavailable, ACME)], terminal={}).choose(set())
+            pick([FakeHost(unavailable, ACME)], set())
         self.assertEqual(raised.exception.code, "remote_unavailable")
         text.assert_not_called()
 
@@ -139,17 +146,15 @@ class Picking(unittest.TestCase):
             choosing(["bitbucket.org/acme/api"]),
             patch("questionary.confirm") as confirm,
         ):
-            self.assertEqual(
-                picker([Owner("acme", "Acme")]).choose({"bitbucket.org/acme/api"}), TrackingChanges([], [])
-            )
+            self.assertEqual(pick_from([Owner("acme", "Acme")], {"bitbucket.org/acme/api"}), TrackingChanges([], []))
         confirm.assert_not_called()
 
     def test_empty_owner_and_account(self):
         with self.assertRaises(Failure) as raised:
-            picker([], []).choose(set())
+            pick_from([], [], set())
         self.assertEqual(raised.exception.code, "remote_empty")
         with self.assertRaises(Failure) as raised:
-            picker([Owner("acme", "Acme")], []).choose(set())
+            pick_from([Owner("acme", "Acme")], [], set())
         self.assertEqual(raised.exception.code, "remote_empty")
 
     def test_real_list_reads_keys_from_the_given_terminal(self):
@@ -158,17 +163,18 @@ class Picking(unittest.TestCase):
             keys.send_text(" ")
             keys.send_text("\r")
             with patch("questionary.confirm", answering(True)):
-                changes = picker([Owner("acme", "Acme")], terminal={"input": keys, "output": DummyOutput()}).choose(
-                    set()
-                )
+                changes = pick_from([Owner("acme", "Acme")], set(), terminal={"input": keys, "output": DummyOutput()})
         self.assertEqual(changes, TrackingChanges(["bitbucket.org/acme/billing"], []))
 
     def test_real_list_cancels_on_escape(self):
         with create_pipe_input() as keys:
             keys.send_text(" \x1b")
             self.assertIsNone(
-                picker([Owner("acme", "Acme")], terminal={"input": keys, "output": DummyOutput()}).choose(set())
+                pick_from([Owner("acme", "Acme")], set(), terminal={"input": keys, "output": DummyOutput()})
             )
+
+    def add_picked(self, prompts):
+        return controllers.add([], None, None, "", True, SILENT, prompts)
 
     def test_needs_a_terminal_before_asking_for_credentials(self):
         with (
@@ -176,14 +182,32 @@ class Picking(unittest.TestCase):
             patch("delphi_code.hosts.configured_hosts") as configured,
             self.assertRaises(Failure) as raised,
         ):
-            RepositoryPicker()
+            self.add_picked(TerminalPrompts())
         self.assertEqual(raised.exception.code, "usage")
         configured.assert_not_called()
 
     def test_needs_credentials_for_some_host(self):
         with patch("delphi_code.hosts.configured_hosts", return_value=[]), self.assertRaises(Failure) as raised:
-            RepositoryPicker(terminal={})
+            self.add_picked(TerminalPrompts({}))
         self.assertEqual(raised.exception.code, "remote_auth_missing")
+
+    def test_listing_progress_ends_before_each_question(self):
+        forbidden = Failure("remote_permission_denied", "lacks read:workspace:bitbucket", ExitCode.OPERATION)
+        progress = MagicMock(spec=Progress)
+        prompts = MagicMock(spec=TerminalPrompts)
+        prompts.type_owner.side_effect = lambda host: progress.mock_calls.append("type_owner") or "acme"
+        prompts.choose_repositories.return_value = None
+        controllers.pick_tracking_changes([FakeHost(forbidden, ACME)], set(), prompts, progress)
+        self.assertEqual(
+            [str(event) for event in progress.mock_calls],
+            [
+                "call.owners_listing_started('Bitbucket', 'workspace')",
+                "call.listing_finished()",
+                "type_owner",
+                "call.repositories_listing_started('Bitbucket', 'acme')",
+                "call.listing_finished()",
+            ],
+        )
 
 
 def numbered_repositories(count):

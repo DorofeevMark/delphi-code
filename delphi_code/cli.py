@@ -1,19 +1,18 @@
 import argparse
 from collections.abc import Callable
-from contextlib import redirect_stdout
-import json
 import os
 from pathlib import Path
-import sys
 
-from . import projects
+from . import controllers
 from .errors import ExitCode, Failure
 from .paths import model_directory
-from .registry import Registry
+from .progress import Progress
+from .projects import SearchRequest
 from .selection import DEFAULT_MAX_BYTES, FileSelection
-from .store import Store
+from .ui import output
+from .ui.prompts import TerminalPrompts
+from .ui.terminal import TerminalProgress
 
-OUTPUT_SCHEMA_VERSION = 1
 MAX_SEARCH_LIMIT = 1000
 
 
@@ -65,96 +64,36 @@ def arguments() -> argparse.Namespace:
 
 
 def execute(args: argparse.Namespace) -> dict:
-    return COMMANDS[args.command](args)
+    with TerminalProgress.on_terminal() as progress:
+        return COMMANDS[args.command](args, progress)
 
 
 def main():
     command = None
-    exit_code = 0
     try:
         args = arguments()
         command = args.command
-        with redirect_stdout(sys.stderr):
-            payload = {"ok": True, "command": command, "data": execute(args)}
+        with output.stdout_reserved_for_result():
+            data = execute(args)
     except Exception as exc:
-        if os.environ.get("DELPHI_CODE_DEBUG") == "1":
-            import traceback
-
-            traceback.print_exc(file=sys.stderr)
-        failure = Failure.from_exception(exc)
-        exit_code = failure.exit_code
-        print(f"delphi-code: {failure}", file=sys.stderr)
-        payload = {"ok": False, "command": command, "error": failure.to_json()}
-        if failure.data is not None:
-            payload["data"] = failure.data
-    print(
-        json.dumps(
-            {"schema_version": OUTPUT_SCHEMA_VERSION, **payload}, ensure_ascii=False, sort_keys=True, allow_nan=False
-        )
-    )
-    raise SystemExit(exit_code)
+        raise SystemExit(output.write_failure(command, exc)) from None
+    raise SystemExit(output.write_success(command, data))
 
 
-def _index(args):
-    return projects.index_local_project(Store(), args.project, _selection(args), args.model)
-
-
-def _search(args):
-    request = projects.SearchRequest(args.query, args.path, args.language, args.limit)
-    if args.project is None:
-        return projects.search_everywhere(Store(), request, args.model)
-    return projects.search_project(Store(), args.project, request, args.model)
-
-
-def _status(args):
-    return projects.status(Store(), args.project)
-
-
-def _doctor(args):
-    from .doctor import diagnose
-
-    return diagnose(args.model, Store(), args.project)
-
-
-def _add(args):
-    if not args.sources:
-        return projects.add_picked_repositories(
-            Store(), Registry(), args.ref, _selection(args), args.model, sync_now=not args.no_sync
-        )
-    return projects.add_sources(
-        Store(), Registry(), args.sources, args.ref, _selection(args), args.model, sync_now=not args.no_sync
-    )
-
-
-def _sync(args):
-    registry = Registry()
-    return projects.sync(Store(), registry, registry.entries(), args.model)
-
-
-def _list(args):
-    return projects.list_projects(Store(), Registry())
-
-
-def _remove(args):
-    return projects.remove_project(Store(), Registry(), args.name, keep_index=args.keep_index)
-
-
-def _setup(args):
-    from .setup import provision
-
-    return provision(args.model, args.source)
-
-
-COMMANDS: dict[str, Callable[[argparse.Namespace], dict]] = {
-    "index": _index,
-    "search": _search,
-    "status": _status,
-    "doctor": _doctor,
-    "add": _add,
-    "sync": _sync,
-    "list": _list,
-    "remove": _remove,
-    "setup": _setup,
+COMMANDS: dict[str, Callable[[argparse.Namespace, Progress], dict]] = {
+    "index": lambda args, progress: controllers.index(args.project, _selection(args), args.model, progress),
+    "search": lambda args, progress: controllers.search(
+        args.project, SearchRequest(args.query, args.path, args.language, args.limit), args.model
+    ),
+    "status": lambda args, progress: controllers.status(args.project),
+    "doctor": lambda args, progress: controllers.doctor(args.project, args.model),
+    "add": lambda args, progress: controllers.add(
+        args.sources, args.ref, _selection(args), args.model, not args.no_sync, progress, TerminalPrompts()
+    ),
+    "sync": lambda args, progress: controllers.sync(args.model, progress),
+    "list": lambda args, progress: controllers.list_tracked(),
+    "remove": lambda args, progress: controllers.remove(args.name, args.keep_index),
+    "setup": lambda args, progress: controllers.setup(args.model, args.source, progress),
 }
 
 

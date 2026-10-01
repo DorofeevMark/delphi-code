@@ -12,7 +12,7 @@ from delphi_code.cli import arguments, execute
 from delphi_code.errors import Failure
 from delphi_code.hosts import Bitbucket, GitHub
 from delphi_code.manifest import Manifest
-from delphi_code.picker import TrackingChanges
+from delphi_code.projects import TrackingChanges
 from delphi_code.registry import Registry
 from delphi_code.sources import GitRemoteSource, LocalSource, source_from_argument, source_from_registry
 from delphi_code.store import Store
@@ -234,9 +234,9 @@ class RemoteSync(LocalHostWithApiRepository):
         self.assertEqual((Registry().entries(), Store().all()), ([], []))
 
     def pick(self, changes):
-        picker = self.enterContext(patch("delphi_code.picker.RepositoryPicker"))
-        picker.return_value.choose.return_value = changes
-        return picker.return_value.choose
+        self.enterContext(patch("delphi_code.ui.prompts.TerminalPrompts.require_terminal"))
+        self.enterContext(patch("delphi_code.hosts.configured_hosts", return_value=["host"]))
+        return self.enterContext(patch("delphi_code.controllers.pick_tracking_changes", return_value=changes))
 
     def test_add_without_sources_needs_a_terminal(self):
         with patch.object(sys.stdin, "isatty", return_value=False), self.assertRaises(Failure) as raised:
@@ -247,7 +247,7 @@ class RemoteSync(LocalHostWithApiRepository):
         self.run_command("add", str(self.work))
         picker = self.pick(TrackingChanges(["bitbucket.org/acme/api"], []))
         added = self.run_command("add", "--path", "src/*")
-        self.assertEqual(picker.call_args.args[0], {f"local:{self.work}"})
+        self.assertEqual(picker.call_args.args[1], {f"local:{self.work}"})
         self.assertEqual(
             ([repo["key"] for repo in added["repos"]], added["removed"], added["cancelled"]),
             (["bitbucket.org/acme/api"], [], False),

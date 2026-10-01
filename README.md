@@ -157,7 +157,7 @@ Cross-project search returns a single globally ranked list, with the `key` and f
 
 ## Output
 
-Each command writes one JSON object to stdout with `schema_version`, `ok`, `command`, and either `data` or `error`. Progress and library diagnostics go to stderr; when stderr is a terminal, `index`, `add`, and `sync` show a live progress line per repository, and nothing extra is written otherwise. Argument help is plain text.
+Each command writes one JSON object to stdout with `schema_version`, `ok`, `command`, and either `data` or `error`. Progress and library diagnostics go to stderr; when stderr is a terminal, `index`, `add`, `sync`, and `setup` show a live progress line per repository or model, and nothing extra is written otherwise. Argument help is plain text.
 
 ```json
 {

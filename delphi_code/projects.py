@@ -3,16 +3,40 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 import shlex
+from typing import NamedTuple
 
 from .errors import ExitCode, Failure
 from .keys import match_key
 from .manifest import Manifest
 from .model import LocalModel
-from .progress import Progress
+from .progress import SILENT, Progress, Stage
 from .registry import Entry, Registry
 from .selection import FileSelection
 from .sources import Checkout, GitRemoteSource, LocalSource, Source, source_from_argument
 from .store import Index, ResolvedProject, Store, require_sqlite_extensions
+
+
+class TrackingChanges(NamedTuple):
+    added: list[str]
+    removed: list[str]
+
+    @classmethod
+    def from_selection(cls, repositories, chosen_keys, tracked_keys):
+        return cls(
+            added=[
+                repository.key
+                for repository in repositories
+                if repository.key in chosen_keys and repository.key not in tracked_keys
+            ],
+            removed=[
+                repository.key
+                for repository in repositories
+                if repository.key not in chosen_keys and repository.key in tracked_keys
+            ],
+        )
+
+    def __bool__(self):
+        return bool(self.added or self.removed)
 
 
 class SearchRequest:
@@ -50,7 +74,9 @@ def resolve_indexed(store: Store, name: str) -> tuple[str, Index]:
     return key, index
 
 
-def index_local_project(store: Store, name: str, selection: FileSelection, model_location: str) -> dict:
+def index_local_project(
+    store: Store, name: str, selection: FileSelection, model_location: str, progress: Progress = SILENT
+) -> dict:
     project, key, index = store.resolve(name)
     if index and index.project is None:
         raise Failure("usage", f"{key} is a remote repository; update it with delphi-code sync", ExitCode.USAGE)
@@ -58,10 +84,13 @@ def index_local_project(store: Store, name: str, selection: FileSelection, model
         raise Failure("project_missing", f"Project directory does not exist: {project}", ExitCode.USAGE)
     model = open_model(model_location)
     checkout = Checkout(project, project, {"kind": "local", "key": key})
-    with Progress.on_terminal() as progress:
-        progress.begin(key)
+    progress.repository_started(key, 1, 1)
+    try:
         result = index_checkout(store, checkout, selection, model, progress)
-        progress.end("✓", _indexed_outcome(result))
+    except Exception as exc:
+        progress.repository_failed(Failure.from_exception(exc))
+        raise
+    progress.repository_finished(result)
     return result
 
 
@@ -74,21 +103,21 @@ def index_checkout(
     index = store.get_or_create(checkout.key, checkout.project)
     with index.lock(True):
         index.read_manifest_compatible_with(model)
-        progress.stage("reading files")
+        progress.stage_started(Stage.READING_FILES)
         collected = collect(checkout.directory, selection, excluded=model.directory)
         manifest = Manifest.for_build(checkout, selection, model)
         index.write_manifest(manifest)
         total = len(collected.files)
-        progress.count("embedding", 0, total, "files")
+        progress.files_embedded(0, total)
         incremental = asyncio.run(
             build_index(
                 index.directory,
                 collected.files,
                 model,
-                on_files_done=lambda done: progress.count("embedding", done, total, "files"),
+                on_files_done=lambda done: progress.files_embedded(done, total),
             )
         )
-        progress.stage("saving")
+        progress.stage_started(Stage.SAVING)
         manifest = manifest.completed()
         counts = index.counts()
         index.write_manifest(manifest)
@@ -210,6 +239,7 @@ def add_sources(
     selection: FileSelection,
     model_location: str,
     sync_now: bool,
+    progress: Progress = SILENT,
 ) -> dict:
     added = []
     with registry.edit() as entries:
@@ -224,49 +254,51 @@ def add_sources(
             added.append(entry)
     if not sync_now:
         return {"registry": str(registry.path), "repos": _summaries(added)}
-    return sync(store, registry, added, model_location)
+    return sync(store, registry, added, model_location, progress)
 
 
-def add_picked_repositories(
-    store: Store, registry: Registry, ref: str | None, selection: FileSelection, model_location: str, sync_now: bool
+def apply_tracking_changes(
+    store: Store,
+    registry: Registry,
+    changes: TrackingChanges,
+    ref: str | None,
+    selection: FileSelection,
+    model_location: str,
+    sync_now: bool,
+    progress: Progress = SILENT,
 ) -> dict:
-    from .picker import RepositoryPicker
-
-    tracked = {entry.current_key() for entry in registry.entries()}
-    changes = RepositoryPicker().choose(tracked)
-    if changes is None:
-        return {"registry": str(registry.path), "cancelled": True, "repos": [], "removed": []}
     added = [Entry(key, selection=selection, ref=ref) for key in changes.added]
     with registry.edit() as entries:
         kept = [entry for entry in entries if entry.current_key() not in changes.removed]
         entries[:] = kept + added
     removed = [{"key": key, "deleted_index": _delete_index(store, key)} for key in changes.removed]
     if not sync_now:
-        return {"registry": str(registry.path), "cancelled": False, "repos": _summaries(added), "removed": removed}
+        return {"registry": str(registry.path), "repos": _summaries(added), "removed": removed}
     never_indexed = [entry for entry in kept if not _has_ready_index(store, entry)]
     try:
-        return {**sync(store, registry, never_indexed + added, model_location), "cancelled": False, "removed": removed}
+        return {**sync(store, registry, never_indexed + added, model_location, progress), "removed": removed}
     except Failure as failure:
-        failure.data = {**(failure.data or {}), "cancelled": False, "removed": removed}
+        failure.data = {**(failure.data or {}), "removed": removed}
         raise
 
 
-def sync(store: Store, registry: Registry, entries: list[Entry], model_location: str) -> dict:
+def sync(
+    store: Store, registry: Registry, entries: list[Entry], model_location: str, progress: Progress = SILENT
+) -> dict:
     if not entries:
         return {"registry": str(registry.path), "repos": []}
     model = open_model(model_location)
     results = []
-    with Progress.on_terminal() as progress:
-        for position, entry in enumerate(entries, start=1):
-            progress.begin(f"[{position}/{len(entries)}] {entry.current_key()}")
-            try:
-                result = _sync_entry(store, entry, model, progress)
-                results.append({"source": entry.source, "ok": True, **result})
-                progress.end("✓", "unchanged" if result["unchanged"] else _indexed_outcome(result))
-            except Exception as exc:
-                failure = Failure.from_exception(exc)
-                results.append({"source": entry.source, "ok": False, "error": failure.to_json()})
-                progress.end("✗", str(failure))
+    for position, entry in enumerate(entries, start=1):
+        progress.repository_started(entry.current_key(), position, len(entries))
+        try:
+            result = _sync_entry(store, entry, model, progress)
+            results.append({"source": entry.source, "ok": True, **result})
+            progress.repository_finished(result)
+        except Exception as exc:
+            failure = Failure.from_exception(exc)
+            results.append({"source": entry.source, "ok": False, "error": failure.to_json()})
+            progress.repository_failed(failure)
     data = {"registry": str(registry.path), "repos": results}
     failed = [result["source"] for result in results if not result["ok"]]
     if failed:
@@ -281,7 +313,7 @@ def sync(store: Store, registry: Registry, entries: list[Entry], model_location:
 
 def _sync_entry(store: Store, entry: Entry, model: LocalModel, progress: Progress) -> dict:
     origin = entry.origin
-    progress.stage("checking for changes")
+    progress.stage_started(Stage.CHECKING_FOR_CHANGES)
     revision = origin.latest_revision(entry.ref)
     index = store.get(origin.key) if revision else None
     if revision and index and index.manifest.holds(revision.commit, entry.selection, model):
@@ -293,13 +325,9 @@ def _sync_entry(store: Store, entry: Entry, model: LocalModel, progress: Progres
             **index.manifest.revision,
         }
     if isinstance(origin, GitRemoteSource):
-        progress.stage("cloning")
+        progress.stage_started(Stage.CLONING)
     with origin.checkout(entry.ref, revision) as checkout:
         return {"unchanged": False, **index_checkout(store, checkout, entry.selection, model, progress)}
-
-
-def _indexed_outcome(result: dict) -> str:
-    return f"{result.get('files', 0)} files, {result.get('chunks', 0)} chunks"
 
 
 def _entry_for(origin: Source, ref: str | None, selection: FileSelection) -> Entry:

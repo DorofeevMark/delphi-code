@@ -8,9 +8,11 @@ from unittest.mock import patch
 
 from fakes import use_fake_model
 
+from delphi_code import projects
 from delphi_code.cli import arguments, execute
 from delphi_code.errors import Failure
 from delphi_code.keys import local_key
+from delphi_code.progress import Progress
 from delphi_code.registry import Entry, Registry
 from delphi_code.selection import FileSelection
 from delphi_code.store import Store
@@ -84,6 +86,39 @@ class RegistryCommands(unittest.TestCase):
         self.assertEqual([repo["ok"] for repo in repos], [False, True, False])
         self.assertEqual(repos[0]["error"]["code"], "project_missing")
         self.assertEqual([item[0] for item in self.indexed], [one])
+
+    def test_sync_reports_progress_for_each_repository(self):
+        one = self.project("one")
+        self.save(Entry(str(self.root / "gone")), Entry(str(one)))
+        events = []
+
+        class Recorder(Progress):
+            def repository_started(self, key, position, count):
+                events.append(("started", position, count))
+
+            def stage_started(self, stage):
+                events.append(("stage", stage))
+
+            def repository_finished(self, result):
+                events.append(("finished", result["key"]))
+
+            def repository_failed(self, failure):
+                events.append(("failed", failure.code))
+
+        registry = Registry()
+        with self.assertRaises(Failure):
+            projects.sync(Store(), registry, registry.entries(), str(self.root / "model"), Recorder())
+        self.assertEqual(
+            events,
+            [
+                ("started", 1, 2),
+                ("stage", "checking for changes"),
+                ("failed", "project_missing"),
+                ("started", 2, 2),
+                ("stage", "checking for changes"),
+                ("finished", local_key(one)),
+            ],
+        )
 
     def test_moved_checkout_keeps_recorded_key(self):
         one = self.project("one")

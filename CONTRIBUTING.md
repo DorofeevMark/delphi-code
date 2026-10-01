@@ -20,12 +20,16 @@ The aim is code a newcomer can read top to bottom without a guide.
 
 | Layer | Modules | Knows about |
 |---|---|---|
-| Entry point | `cli.py` | argparse and JSON output only; one small handler per command |
+| Entry point | `cli.py` | argparse, and the concrete UI handed to each controller |
+| User interface | `ui/output.py`, `ui/terminal.py`, `ui/prompts.py`, `ui/repository_list.py` | JSON output, the progress line, and single questions; only the ports and foundations below |
+| Controllers | `controllers.py` | one function per command; coordinates services with the `Progress` and `Prompts` ports |
 | Services | `projects.py`, `doctor.py`, `setup.py` | what a command does, expressed through domain objects |
 | Domain | `store.py`, `manifest.py`, `registry.py`, `sources.py`, `hosts.py`, `model.py`, `selection.py`, `files.py`, `indexing.py` | one concept each |
-| Foundations | `errors.py`, `keys.py`, `paths.py`, `offline.py` | nothing above them |
+| Foundations | `errors.py`, `keys.py`, `paths.py`, `offline.py`, `progress.py` | nothing above them |
 
 Lower layers never import `cli`, and no module below `cli` sees an `argparse.Namespace`.
+
+**User interface.** Controllers, services, and the domain never import `ui/` and never write to the terminal; `tests/test_layers.py` enforces it. They depend on two ports instead. `Progress` (`progress.py`) receives events and does nothing by default; `ui/terminal.py` draws them. `Prompts` (`controllers.py`) asks single questions; `ui/prompts.py` answers them in the terminal. A controller decides what is asked and when, gathers every decision first, and then calls one service command such as `projects.apply_tracking_changes`, so services never ask. Each controller takes only the ports it uses, and `cli.py` is the one place that picks their implementations. A new frontend implements the two ports and reuses every controller unchanged.
 
 **Interfaces.**
 - Hide representations behind objects. Callers ask `manifest.ready` or `index.search(...)`; they never reach into JSON dicts or SQL.

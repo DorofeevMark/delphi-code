@@ -6,10 +6,11 @@ from pathlib import Path
 import socket
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 from delphi_code.errors import ExitCode, Failure
 from delphi_code.paths import data_directory
+from delphi_code.progress import Progress, Stage
 from delphi_code.setup import download, provision, verify_assets
 
 
@@ -42,6 +43,27 @@ class Setup(unittest.TestCase):
             self.assertTrue(provision(self.args.model, self.args.source)["reused"])
             self.assertEqual(doctor.call_count, 2)
             download.assert_not_called()
+
+    def test_reports_each_setup_stage(self):
+        progress = Mock(spec=Progress)
+        with patch("delphi_code.setup.diagnose", return_value={}):
+            provision(self.args.model, self.args.source, progress)
+            provision(self.args.model, None, progress)
+        destination = Path(self.args.model).resolve()
+        self.assertEqual(
+            progress.mock_calls,
+            [
+                call.model_setup_started(destination),
+                call.stage_started(Stage.COPYING_MODEL),
+                call.stage_started(Stage.VERIFYING_MODEL),
+                call.stage_started(Stage.CHECKING_INSTALLATION),
+                call.model_setup_finished(False),
+                call.model_setup_started(destination),
+                call.stage_started(Stage.VERIFYING_MODEL),
+                call.stage_started(Stage.CHECKING_INSTALLATION),
+                call.model_setup_finished(True),
+            ],
+        )
 
     def test_corruption_preserves_destination(self):
         destination = Path(self.args.model)
@@ -95,7 +117,8 @@ class Setup(unittest.TestCase):
     def test_download_process_failure_has_recovery(self):
         with patch("delphi_code.setup.subprocess.run") as run:
             run.return_value.returncode = 1
-            with self.assertRaisesRegex(Failure, "delphi-code setup --from"):
+            run.return_value.stderr = "Fetching files\nConnectionError: host unreachable\n"
+            with self.assertRaisesRegex(Failure, r"\(ConnectionError: host unreachable\).*delphi-code setup --from"):
                 download(self.root / "download")
 
     def test_linked_assets_rejected(self):
