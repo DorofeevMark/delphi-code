@@ -71,14 +71,22 @@ delphi-code index -p /path/to/project
 delphi-code search -p /path/to/project 'where are user passwords checked?'
 delphi-code search -p /path/to/project 'parse configuration' --language python --path 'src/*' --limit 5
 delphi-code status -p /path/to/project
+delphi-code list --indexed
 ```
 
-- **`index`** builds or incrementally updates a project's index.
-- **`search`** runs a natural-language query. Without `-p`, it searches every stored index.
-- **`status`** reports stored index state. It needs no model and does not rescan source files to detect staleness.
-- **`doctor`** checks the model, SQLite extensions, and native storage, then runs a real local embedding and vector distance calculation.
-- **`setup`** provisions the model (see above).
-- **`add`**, **`sync`**, **`list`**, and **`remove`** manage tracked projects (see below).
+| Command | What it does | Options |
+|---|---|---|
+| `setup` | Downloads or imports the pinned model and checks the installation (see Model setup). | `--from DIR`, `--model DIR` |
+| `doctor` | Checks the model, SQLite extensions, and native storage, then runs a real local embedding and vector distance calculation. | `-p`, `--model` |
+| `index` | Builds or incrementally updates a project's index. | `-p`, `--model`, `--path`, `--language`, `--ignore`, `--max-bytes` |
+| `search QUERY` | Runs a natural-language query. Without `-p`, it searches every stored index. | `-p`, `--model`, `--path`, `--language`, `--limit` (1–1000, default 10) |
+| `status` | Reports a project's stored index state. Needs no model and does not rescan source files to detect staleness. | `-p` |
+| `add [SOURCE ...]` | Tracks projects or remote repositories and indexes them; without sources, picks repositories interactively. | `--ref`, `--no-sync`, `--model`, `--path`, `--language`, `--ignore`, `--max-bytes` |
+| `sync` | Indexes every tracked project. | `--model` |
+| `list` | Lists tracked projects and every stored index. Needs no model. | `--indexed` lists only projects that have an index |
+| `remove NAME` | Stops tracking a project and deletes its index. | `--keep-index` |
+
+Every command accepts `--json` and `-h`/`--help`. `--path`, `--language`, and `--ignore` can be repeated. `--model` defaults to `DELPHI_CODE_MODEL` or the model installed by `setup`. `add`, `sync`, `list`, and `remove` are described under Tracking projects below.
 
 `python -m delphi_code` works as an alternative to the `delphi-code` executable.
 
@@ -101,7 +109,7 @@ delphi-code remove api
 
 - **`add`** records projects and indexes them; `--no-sync` only records them. Filter options are stored with each project, and adding a project again replaces its options.
 - **`sync`** indexes every tracked project. One failing project does not stop the rest: the command then exits with `sync_failed` (code 5) and still reports each project's result under `data`.
-- **`list`** shows tracked projects and every stored index, including ones created with plain `index`. It needs no model.
+- **`list`** shows tracked projects and every stored index, including ones created with plain `index`. `list --indexed` shows only projects that have an index. It needs no model.
 - **`remove`** stops tracking a project and deletes its index; `--keep-index` keeps the index.
 
 The list lives in `repos.toml` in the storage directory (`DELPHI_CODE_REGISTRY` overrides the location). You can edit it by hand; `add` and `remove` rewrite it without comments.

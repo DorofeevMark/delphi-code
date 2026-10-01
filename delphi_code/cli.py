@@ -34,8 +34,13 @@ def arguments() -> argparse.Namespace:
     def add_command_parser(name, **options):
         return commands.add_parser(name, parents=[output_format_options], **options)
 
-    for name in ("index", "search", "status", "doctor"):
-        command = add_command_parser(name)
+    for name, summary in (
+        ("index", "Build or update a project's index"),
+        ("search", "Search indexed code with a natural-language query"),
+        ("status", "Show a project's stored index state"),
+        ("doctor", "Check the model, SQLite extensions and native storage"),
+    ):
+        command = add_command_parser(name, help=summary)
         command.add_argument(
             "--project",
             "-p",
@@ -63,7 +68,8 @@ def arguments() -> argparse.Namespace:
     add.add_argument("--no-sync", action="store_true", help="Only update the registry")
     sync = add_command_parser("sync", help="Index every tracked project")
     _add_model_option(sync)
-    add_command_parser("list", help="List tracked projects and stored indexes")
+    listing = add_command_parser("list", help="List tracked projects and stored indexes")
+    listing.add_argument("--indexed", action="store_true", help="Only list projects that have an index")
     remove = add_command_parser("remove", help="Stop tracking a project and delete its index")
     remove.add_argument("name", help="Project path, key, or indexed name")
     remove.add_argument("--keep-index", action="store_true", help="Only untrack the project")
@@ -108,7 +114,7 @@ COMMANDS: dict[str, Callable[[argparse.Namespace, Progress], ControllerResponse]
         args.sources, args.ref, _selection(args), args.model, not args.no_sync, progress, TerminalPrompts()
     ),
     "sync": lambda args, progress: indexing.sync(args.model, progress),
-    "list": lambda args, progress: project_catalog.list_tracked(),
+    "list": lambda args, progress: project_catalog.list_tracked(args.indexed),
     "remove": lambda args, progress: project_catalog.remove(args.name, args.keep_index),
     "setup": lambda args, progress: installation.setup(args.model, args.source, progress),
 }

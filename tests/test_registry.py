@@ -141,6 +141,13 @@ class RegistryCommands(unittest.TestCase):
         self.assertEqual(rows[local_key(two)]["tracked"], False)
         self.assertEqual(rows[local_key(two)]["project"], str(two))
 
+    def test_list_indexed_skips_projects_without_index(self):
+        one, two = self.project("one"), self.project("two")
+        self.run_command("add", str(one), "--no-sync")
+        Store().get_or_create(local_key(two), two)
+        rows = self.run_command("list", "--indexed")["repos"]
+        self.assertEqual([row["key"] for row in rows], [local_key(two)])
+
     def test_remove_untracks_and_deletes_index(self):
         one, two = self.project("one"), self.project("two")
         self.run_command("add", str(one), str(two))

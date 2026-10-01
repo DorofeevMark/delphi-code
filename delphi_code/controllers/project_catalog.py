@@ -13,10 +13,11 @@ def status(project: str) -> ControllerResponse:
     return ControllerResponse(state, [IndexStateView(state)])
 
 
-def list_tracked() -> ControllerResponse:
-    listing = project_catalog.list_projects(Store(), Registry())
+def list_tracked(only_indexed: bool) -> ControllerResponse:
+    listing = project_catalog.list_projects(Store(), Registry(), only_indexed)
     if not listing["repos"]:
-        return ControllerResponse(listing, [Message("No projects are tracked or indexed yet.", TRACK_A_PROJECT_HINT)])
+        nothing_listed = "No projects are indexed yet." if only_indexed else "No projects are tracked or indexed yet."
+        return ControllerResponse(listing, [Message(nothing_listed, TRACK_A_PROJECT_HINT)])
     return ControllerResponse(listing, [ProjectTableView(listing["repos"])])
 
 

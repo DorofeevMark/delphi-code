@@ -36,11 +36,12 @@ def status(store: Store, name: str) -> dict:
         }
 
 
-def list_projects(store: Store, registry: Registry) -> dict:
+def list_projects(store: Store, registry: Registry, only_indexed: bool = False) -> dict:
     tracked = {entry.current_key(): entry for entry in registry.entries()}
     stored = {index.key: index for index in store.all()}
+    listed_keys = set(stored) if only_indexed else set(tracked) | set(stored)
     rows = []
-    for key in sorted(set(tracked) | set(stored)):
+    for key in sorted(listed_keys):
         index, entry = stored.get(key), tracked.get(key)
         manifest = index.manifest if index else None
         rows.append(
