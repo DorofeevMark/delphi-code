@@ -2,6 +2,7 @@ import sys
 from typing import NamedTuple
 
 from .errors import ExitCode, Failure
+from .progress import waiting_for
 from .repository_list import ask_repositories
 
 
@@ -50,7 +51,8 @@ class RepositoryPicker:
         owner = self._choose_owner(host)
         if owner is None:
             return None
-        repositories = host.repositories(owner)
+        with waiting_for(f"Listing {host.name} repositories in {owner}"):
+            repositories = host.repositories(owner)
         if not repositories:
             raise Failure(
                 "remote_empty", f"You have no repositories in the {host.name} {host.owner_noun} {owner}", ExitCode.USAGE
@@ -78,7 +80,8 @@ class RepositoryPicker:
         import questionary
 
         try:
-            owners = host.owners()
+            with waiting_for(f"Listing {host.name} {host.owner_noun}s"):
+                owners = host.owners()
         except Failure as failure:
             if failure.code != "remote_permission_denied":
                 raise

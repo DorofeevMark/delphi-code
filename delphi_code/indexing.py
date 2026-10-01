@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,7 +33,9 @@ class Passage:
     vector: NDArray[np.float32]
 
 
-async def build_index(directory: Path, files: dict[str, SourceFile], model: LocalModel) -> dict:
+async def build_index(
+    directory: Path, files: dict[str, SourceFile], model: LocalModel, on_files_done: Callable[[int], None]
+) -> dict:
     provider = coco.ContextProvider()
     provider.provide(MODEL, model)
     provider.provide(DATABASE, sqlite.connect(directory / "vectors.sqlite", load_vec=True))
@@ -40,10 +43,11 @@ async def build_index(directory: Path, files: dict[str, SourceFile], model: Loca
     app = coco.App(
         coco.AppConfig(name="delphi-code", environment=environment), build, files, model.sha256, model.dimensions
     )
-    handle = app.update()
-    await handle
-    stats = handle.stats()
-    ingest_stats = stats.by_component.get("ingest") if stats else None
+    ingest_stats = None
+    async for snapshot in app.update().watch():
+        ingest_stats = snapshot.stats.by_component.get("ingest")
+        if ingest_stats:
+            on_files_done(ingest_stats.num_finished)
     return dict(ingest_stats._asdict()) if ingest_stats else {}
 
 

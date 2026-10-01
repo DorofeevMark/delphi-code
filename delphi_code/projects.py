@@ -8,9 +8,10 @@ from .errors import ExitCode, Failure
 from .keys import match_key
 from .manifest import Manifest
 from .model import LocalModel
+from .progress import Progress
 from .registry import Entry, Registry
 from .selection import FileSelection
-from .sources import Checkout, LocalSource, Source, source_from_argument
+from .sources import Checkout, GitRemoteSource, LocalSource, Source, source_from_argument
 from .store import Index, ResolvedProject, Store, require_sqlite_extensions
 
 
@@ -56,20 +57,38 @@ def index_local_project(store: Store, name: str, selection: FileSelection, model
     if project is None or not project.is_dir():
         raise Failure("project_missing", f"Project directory does not exist: {project}", ExitCode.USAGE)
     model = open_model(model_location)
-    return index_checkout(store, Checkout(project, project, {"kind": "local", "key": key}), selection, model)
+    checkout = Checkout(project, project, {"kind": "local", "key": key})
+    with Progress.on_terminal() as progress:
+        progress.begin(key)
+        result = index_checkout(store, checkout, selection, model, progress)
+        progress.end("✓", _indexed_outcome(result))
+    return result
 
 
-def index_checkout(store: Store, checkout: Checkout, selection: FileSelection, model: LocalModel) -> dict:
+def index_checkout(
+    store: Store, checkout: Checkout, selection: FileSelection, model: LocalModel, progress: Progress
+) -> dict:
     from .files import collect
     from .indexing import build_index
 
     index = store.get_or_create(checkout.key, checkout.project)
     with index.lock(True):
         index.read_manifest_compatible_with(model)
+        progress.stage("reading files")
         collected = collect(checkout.directory, selection, excluded=model.directory)
         manifest = Manifest.for_build(checkout, selection, model)
         index.write_manifest(manifest)
-        incremental = asyncio.run(build_index(index.directory, collected.files, model))
+        total = len(collected.files)
+        progress.count("embedding", 0, total, "files")
+        incremental = asyncio.run(
+            build_index(
+                index.directory,
+                collected.files,
+                model,
+                on_files_done=lambda done: progress.count("embedding", done, total, "files"),
+            )
+        )
+        progress.stage("saving")
         manifest = manifest.completed()
         counts = index.counts()
         index.write_manifest(manifest)
@@ -237,12 +256,17 @@ def sync(store: Store, registry: Registry, entries: list[Entry], model_location:
         return {"registry": str(registry.path), "repos": []}
     model = open_model(model_location)
     results = []
-    for entry in entries:
-        try:
-            results.append({"source": entry.source, "ok": True, **_sync_entry(store, entry, model)})
-        except Exception as exc:
-            failure = Failure.from_exception(exc)
-            results.append({"source": entry.source, "ok": False, "error": failure.to_json()})
+    with Progress.on_terminal() as progress:
+        for position, entry in enumerate(entries, start=1):
+            progress.begin(f"[{position}/{len(entries)}] {entry.current_key()}")
+            try:
+                result = _sync_entry(store, entry, model, progress)
+                results.append({"source": entry.source, "ok": True, **result})
+                progress.end("✓", "unchanged" if result["unchanged"] else _indexed_outcome(result))
+            except Exception as exc:
+                failure = Failure.from_exception(exc)
+                results.append({"source": entry.source, "ok": False, "error": failure.to_json()})
+                progress.end("✗", str(failure))
     data = {"registry": str(registry.path), "repos": results}
     failed = [result["source"] for result in results if not result["ok"]]
     if failed:
@@ -255,8 +279,9 @@ def sync(store: Store, registry: Registry, entries: list[Entry], model_location:
     return data
 
 
-def _sync_entry(store: Store, entry: Entry, model: LocalModel) -> dict:
+def _sync_entry(store: Store, entry: Entry, model: LocalModel, progress: Progress) -> dict:
     origin = entry.origin
+    progress.stage("checking for changes")
     revision = origin.latest_revision(entry.ref)
     index = store.get(origin.key) if revision else None
     if revision and index and index.manifest.holds(revision.commit, entry.selection, model):
@@ -267,8 +292,14 @@ def _sync_entry(store: Store, entry: Entry, model: LocalModel) -> dict:
             "index_directory": str(index.directory),
             **index.manifest.revision,
         }
+    if isinstance(origin, GitRemoteSource):
+        progress.stage("cloning")
     with origin.checkout(entry.ref, revision) as checkout:
-        return {"unchanged": False, **index_checkout(store, checkout, entry.selection, model)}
+        return {"unchanged": False, **index_checkout(store, checkout, entry.selection, model, progress)}
+
+
+def _indexed_outcome(result: dict) -> str:
+    return f"{result.get('files', 0)} files, {result.get('chunks', 0)} chunks"
 
 
 def _entry_for(origin: Source, ref: str | None, selection: FileSelection) -> Entry:

@@ -181,7 +181,7 @@ class RemoteSync(LocalHostWithApiRepository):
         use_fake_model(self, self.root / "model")
         self.checkouts = []
 
-        def index_checkout(store, checkout, options, model):
+        def index_checkout(store, checkout, options, model, progress):
             self.checkouts.append(checkout)
             index = store.get_or_create(checkout.key, checkout.project)
             index.write_manifest(Manifest.for_build(checkout, options, model).completed())

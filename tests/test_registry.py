@@ -31,7 +31,7 @@ class RegistryCommands(unittest.TestCase):
         use_fake_model(self, self.root / "model")
         self.indexed = []
 
-        def index_checkout(store, checkout, options, model):
+        def index_checkout(store, checkout, options, model, progress):
             key = checkout.key
             self.indexed.append((checkout.project, key, options))
             index = store.get_or_create(key, checkout.project)
