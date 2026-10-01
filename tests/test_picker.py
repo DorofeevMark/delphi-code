@@ -174,7 +174,7 @@ class Picking(unittest.TestCase):
             )
 
     def add_picked(self, prompts):
-        return controllers.add([], None, None, "", True, SILENT, prompts)
+        return controllers.add([], None, None, "", True, SILENT, prompts).data
 
     def test_needs_a_terminal_before_asking_for_credentials(self):
         with (

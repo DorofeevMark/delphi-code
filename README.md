@@ -1,6 +1,6 @@
 # Delphi Code
 
-Offline semantic code search for agents. Delphi Code is a small Python CLI that indexes local source trees with a local embedding model and answers natural-language queries with JSON. It runs one command at a time, with no daemon, server, account, cloud embedding provider, or runtime downloads.
+Offline semantic code search for agents. Delphi Code is a small Python CLI that indexes local source trees with a local embedding model and answers natural-language queries with JSON for agents and readable text in a terminal. It runs one command at a time, with no daemon, server, account, cloud embedding provider, or runtime downloads.
 
 ## Quick start
 
@@ -138,7 +138,7 @@ delphi-code add github.com/octo/tools
 delphi-code add
 ```
 
-Choose Bitbucket or GitHub (asked only when both have credentials), then a Bitbucket workspace or GitHub account (skipped when there is only one). If your Bitbucket credentials may not list workspaces, you type the workspace name instead; `BITBUCKET_WORKSPACE` pre-fills it. Then check repositories in a list you can filter by typing. Repositories you already track start checked, so unchecking one stops tracking it and deletes its index. After you confirm, the new repositories are indexed, together with tracked repositories that have no complete index yet, such as one whose first indexing failed. Filter options and `--ref` apply to the repositories you add. The prompts are drawn on stderr, and stdout still receives one JSON object with the added repositories under `repos` and the untracked ones under `removed`. Cancelling changes nothing and reports `"cancelled": true`. Without a terminal, `add` requires sources.
+Choose Bitbucket or GitHub (asked only when both have credentials), then a Bitbucket workspace or GitHub account (skipped when there is only one). If your Bitbucket credentials may not list workspaces, you type the workspace name instead; `BITBUCKET_WORKSPACE` pre-fills it. Then check repositories in a list you can filter by typing. Repositories you already track start checked, so unchecking one stops tracking it and deletes its index. After you confirm, the new repositories are indexed, together with tracked repositories that have no complete index yet, such as one whose first indexing failed. Filter options and `--ref` apply to the repositories you add. The prompts are drawn on stderr, and with `--json` or a redirected stdout, stdout still receives one JSON object with the added repositories under `repos` and the untracked ones under `removed`. Cancelling changes nothing and reports `"cancelled": true`. Without a terminal, `add` requires sources.
 
 **Credentials.** Git never prompts. Credentials from the environment reach git through `GIT_ASKPASS`, never in URLs or arguments, and take precedence over configured git credentials. Listing repositories for the picker uses the services' REST APIs. The API requests run in a separate process, like the model download in `setup`, so the main process keeps its network guard.
 
@@ -157,7 +157,9 @@ Cross-project search returns a single globally ranked list, with the `key` and f
 
 ## Output
 
-Each command writes one JSON object to stdout with `schema_version`, `ok`, `command`, and either `data` or `error`. Progress and library diagnostics go to stderr; when stderr is a terminal, `index`, `add`, `sync`, and `setup` show a live progress line per repository or model, and nothing extra is written otherwise. Argument help is plain text.
+When stdout is a terminal, commands print a readable summary: search results with locations, scores, and code snippets, `list` as a table, and `status` and `doctor` as labelled fields. Set `NO_COLOR` to turn off colors.
+
+When stdout is not a terminal, as when an agent or script runs a command, or with `--json`, each command writes one JSON object to stdout with `schema_version`, `ok`, `command`, and either `data` or `error`. Progress and library diagnostics go to stderr; when stderr is a terminal, `index`, `add`, `sync`, and `setup` show a live progress line per repository or model, and nothing extra is written otherwise. Argument help is plain text.
 
 ```json
 {

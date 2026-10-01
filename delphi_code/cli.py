@@ -2,8 +2,10 @@ import argparse
 from collections.abc import Callable
 import os
 from pathlib import Path
+import sys
 
 from . import controllers
+from .controllers import ControllerResponse
 from .errors import ExitCode, Failure
 from .paths import model_directory
 from .progress import Progress
@@ -23,9 +25,17 @@ class Parser(argparse.ArgumentParser):
 
 def arguments() -> argparse.Namespace:
     parser = Parser(prog="delphi-code", description="Offline local code search")
+    output_format_options = Parser(add_help=False)
+    output_format_options.add_argument(
+        "--json", action="store_true", help="Write JSON even on a terminal; JSON is the default when piped"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
+
+    def add_command_parser(name, **options):
+        return commands.add_parser(name, parents=[output_format_options], **options)
+
     for name in ("index", "search", "status", "doctor"):
-        command = commands.add_parser(name)
+        command = add_command_parser(name)
         command.add_argument(
             "--project",
             "-p",
@@ -39,7 +49,7 @@ def arguments() -> argparse.Namespace:
         if name == "search":
             command.add_argument("query")
             command.add_argument("--limit", type=_search_limit, default=10)
-    add = commands.add_parser("add", help="Track projects in the registry and index them")
+    add = add_command_parser("add", help="Track projects in the registry and index them")
     add.add_argument(
         "sources",
         nargs="*",
@@ -51,36 +61,43 @@ def arguments() -> argparse.Namespace:
     _add_selection_options(add, indexing=True)
     _add_model_option(add)
     add.add_argument("--no-sync", action="store_true", help="Only update the registry")
-    sync = commands.add_parser("sync", help="Index every tracked project")
+    sync = add_command_parser("sync", help="Index every tracked project")
     _add_model_option(sync)
-    commands.add_parser("list", help="List tracked projects and stored indexes")
-    remove = commands.add_parser("remove", help="Stop tracking a project and delete its index")
+    add_command_parser("list", help="List tracked projects and stored indexes")
+    remove = add_command_parser("remove", help="Stop tracking a project and delete its index")
     remove.add_argument("name", help="Project path, key, or indexed name")
     remove.add_argument("--keep-index", action="store_true", help="Only untrack the project")
-    setup = commands.add_parser("setup", help="Download or import the pinned model and check the installation")
+    setup = add_command_parser("setup", help="Download or import the pinned model and check the installation")
     setup.add_argument("--from", dest="source", help="Import a prepared MiniLM model without network access")
     _add_model_option(setup, help="Model destination")
     return parser.parse_args()
 
 
-def execute(args: argparse.Namespace) -> dict:
-    with TerminalProgress.on_terminal() as progress:
+def execute(args: argparse.Namespace, progress: TerminalProgress | None = None) -> ControllerResponse:
+    progress = progress or TerminalProgress.on_terminal()
+    with progress:
         return COMMANDS[args.command](args, progress)
 
 
 def main():
-    command = None
+    command, write_json = None, output.json_output_requested(json_flag="--json" in sys.argv[1:])
+    progress = TerminalProgress.on_terminal()
     try:
         args = arguments()
-        command = args.command
+        command, write_json = args.command, output.json_output_requested(json_flag=args.json)
         with output.stdout_reserved_for_result():
-            data = execute(args)
+            response = execute(args, progress)
     except Exception as exc:
-        raise SystemExit(output.write_failure(command, exc)) from None
-    raise SystemExit(output.write_success(command, data))
+        failure = output.failure_of(exc)
+        if write_json:
+            raise SystemExit(output.write_json_failure(command, failure)) from None
+        raise SystemExit(output.write_text_failure(failure)) from None
+    if write_json:
+        raise SystemExit(output.write_json_success(command, response.data))
+    raise SystemExit(output.write_text_success(response.views))
 
 
-COMMANDS: dict[str, Callable[[argparse.Namespace, Progress], dict]] = {
+COMMANDS: dict[str, Callable[[argparse.Namespace, Progress], ControllerResponse]] = {
     "index": lambda args, progress: controllers.index(args.project, _selection(args), args.model, progress),
     "search": lambda args, progress: controllers.search(
         args.project, SearchRequest(args.query, args.path, args.language, args.limit), args.model

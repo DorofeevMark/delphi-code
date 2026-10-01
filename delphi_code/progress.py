@@ -17,6 +17,10 @@ class Stage(StrEnum):
 
 
 class Progress:
+    @property
+    def showed_outcome_lines(self) -> bool:
+        return False
+
     def owners_listing_started(self, host_name: str, owner_noun: str):
         pass
 

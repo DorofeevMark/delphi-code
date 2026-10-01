@@ -43,7 +43,7 @@ class RegistryCommands(unittest.TestCase):
 
     def run_command(self, *args):
         with patch.object(sys, "argv", ["delphi-code", *args]):
-            return execute(arguments())
+            return execute(arguments()).data
 
     def save(self, *entries):
         with Registry().edit() as current:

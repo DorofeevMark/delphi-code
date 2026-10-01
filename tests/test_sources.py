@@ -196,7 +196,7 @@ class RemoteSync(LocalHostWithApiRepository):
 
     def run_command(self, *args):
         with patch.object(sys, "argv", ["delphi-code", *args]):
-            return execute(arguments())
+            return execute(arguments()).data
 
     def test_add_sync_skips_unchanged_and_follows_new_commits(self):
         added = self.run_command("add", "git@bitbucket.org:acme/api.git")["repos"][0]

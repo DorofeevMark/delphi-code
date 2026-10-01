@@ -58,7 +58,7 @@ class CrossProjectSearch(unittest.TestCase):
 
     def search(self, *options):
         with patch.object(sys, "argv", ["delphi-code", "search", "query", *options]):
-            return execute(arguments())
+            return execute(arguments()).data
 
     def test_global_ranking_limit_and_project_identity(self):
         first, _ = self.register("one", [("a.py", "python", [0, 1]), ("b.py", "python", [0.8, 0.6])])

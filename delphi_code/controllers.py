@@ -1,4 +1,4 @@
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 from . import projects
 from .errors import ExitCode, Failure
@@ -7,6 +7,16 @@ from .projects import SearchRequest, TrackingChanges
 from .registry import Registry
 from .selection import FileSelection
 from .store import Store
+from .ui.text_layout import Message, TextView, pluralized
+from .ui.views.diagnostics import DiagnosticsView, ModelSetupView
+from .ui.views.index_state import IndexStateView
+from .ui.views.indexing import IndexingOutcomesSummaryView, IndexingOutcomeView
+from .ui.views.project_names import project_display_name
+from .ui.views.project_table import ProjectTableView
+from .ui.views.search_hits import SearchHitsView
+from .ui.views.tracking import NewlyTrackedProjectsView, UntrackedProjectView
+
+TRACK_A_PROJECT_HINT = "Track one with: delphi-code add PATH_OR_REPOSITORY"
 
 
 class Prompts(Protocol):
@@ -18,24 +28,37 @@ class Prompts(Protocol):
     def confirm_changes(self, changes: TrackingChanges) -> bool: ...
 
 
-def index(project: str, selection: FileSelection, model: str, progress: Progress) -> dict:
-    return projects.index_local_project(Store(), project, selection, model, progress)
+class ControllerResponse(NamedTuple):
+    data: dict
+    views: list[TextView]
 
 
-def search(project: str | None, request: SearchRequest, model: str) -> dict:
+def index(project: str, selection: FileSelection, model: str, progress: Progress) -> ControllerResponse:
+    outcome = projects.index_local_project(Store(), project, selection, model, progress)
+    return ControllerResponse(outcome, [IndexingOutcomeView(outcome, shows_headline=not progress.showed_outcome_lines)])
+
+
+def search(project: str | None, request: SearchRequest, model: str) -> ControllerResponse:
     if project is None:
-        return projects.search_everywhere(Store(), request, model)
-    return projects.search_project(Store(), project, request, model)
+        found = projects.search_everywhere(Store(), request, model)
+        searched_scope = pluralized(len(found["projects"]), "index", "indexes")
+    else:
+        found = projects.search_project(Store(), project, request, model)
+        searched_scope = project_display_name(found["key"])
+    view = SearchHitsView(request.query, searched_scope, found["results"], names_project_of_each_hit=project is None)
+    return ControllerResponse(found, [view])
 
 
-def status(project: str) -> dict:
-    return projects.status(Store(), project)
+def status(project: str) -> ControllerResponse:
+    state = projects.status(Store(), project)
+    return ControllerResponse(state, [IndexStateView(state)])
 
 
-def doctor(project: str, model: str) -> dict:
+def doctor(project: str, model: str) -> ControllerResponse:
     from .doctor import diagnose
 
-    return diagnose(model, Store(), project)
+    diagnostics = diagnose(model, Store(), project)
+    return ControllerResponse(diagnostics, [DiagnosticsView(diagnostics)])
 
 
 def add(
@@ -46,29 +69,62 @@ def add(
     sync_now: bool,
     progress: Progress,
     prompts: Prompts,
-) -> dict:
+) -> ControllerResponse:
     if sources:
-        return projects.add_sources(Store(), Registry(), sources, ref, selection, model, sync_now, progress)
-    return _add_picked(ref, selection, model, sync_now, progress, prompts)
+        added = projects.add_sources(Store(), Registry(), sources, ref, selection, model, sync_now, progress)
+    else:
+        added = _add_picked(ref, selection, model, sync_now, progress, prompts)
+    return ControllerResponse(added, _tracking_change_views(added, sync_now, progress))
 
 
-def sync(model: str, progress: Progress) -> dict:
+def sync(model: str, progress: Progress) -> ControllerResponse:
     registry = Registry()
-    return projects.sync(Store(), registry, registry.entries(), model, progress)
+    synced = projects.sync(Store(), registry, registry.entries(), model, progress)
+    if not synced["repos"]:
+        return ControllerResponse(synced, [Message("No projects are tracked.", TRACK_A_PROJECT_HINT)])
+    return ControllerResponse(synced, [_indexing_outcomes_view(synced["repos"], progress)])
 
 
-def list_tracked() -> dict:
-    return projects.list_projects(Store(), Registry())
+def list_tracked() -> ControllerResponse:
+    listing = projects.list_projects(Store(), Registry())
+    if not listing["repos"]:
+        return ControllerResponse(listing, [Message("No projects are tracked or indexed yet.", TRACK_A_PROJECT_HINT)])
+    return ControllerResponse(listing, [ProjectTableView(listing["repos"])])
 
 
-def remove(name: str, keep_index: bool) -> dict:
-    return projects.remove_project(Store(), Registry(), name, keep_index)
+def remove(name: str, keep_index: bool) -> ControllerResponse:
+    removal = projects.remove_project(Store(), Registry(), name, keep_index)
+    view = UntrackedProjectView(removal["key"], removal["untracked"], removal["deleted_index"])
+    return ControllerResponse(removal, [view])
 
 
-def setup(model: str, source: str | None, progress: Progress) -> dict:
+def setup(model: str, source: str | None, progress: Progress) -> ControllerResponse:
     from .setup import provision
 
-    return provision(model, source, progress)
+    provisioned = provision(model, source, progress)
+    view = ModelSetupView(
+        provisioned["model"], provisioned["index_root"], provisioned["reused"], provisioned["diagnostics"]
+    )
+    return ControllerResponse(provisioned, [view])
+
+
+def _tracking_change_views(added: dict, sync_now: bool, progress: Progress) -> list[TextView]:
+    if added.get("cancelled"):
+        return [Message("Cancelled; nothing changed")]
+    removed = added.get("removed", [])
+    if not added["repos"] and not removed:
+        return [Message("Nothing changed")]
+    views: list[TextView] = [
+        _indexing_outcomes_view(added["repos"], progress)
+        if sync_now and added["repos"]
+        else NewlyTrackedProjectsView([repository["key"] for repository in added["repos"]])
+    ]
+    views.extend(UntrackedProjectView(project["key"], True, project["deleted_index"]) for project in removed)
+    return views
+
+
+def _indexing_outcomes_view(outcomes: list[dict], progress: Progress) -> TextView:
+    return IndexingOutcomesSummaryView(outcomes, lists_each_outcome=not progress.showed_outcome_lines)
 
 
 def pick_tracking_changes(hosts, tracked_keys, prompts: Prompts, progress: Progress) -> TrackingChanges | None:

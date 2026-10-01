@@ -33,6 +33,23 @@ class StatusLines(unittest.TestCase):
         self.assertTrue(frames[-1].startswith("✓ [1/2] github.com/owner/repository  10 files, 40 chunks"))
 
 
+class OutcomeLines(unittest.TestCase):
+    def test_reports_outcome_lines_only_once_one_was_kept(self):
+        progress = TerminalProgress(StatusLine(io.StringIO()))
+        with progress:
+            progress.repository_started("github.com/owner/one", 1, 1)
+            self.assertFalse(progress.showed_outcome_lines)
+            progress.repository_finished({"unchanged": True})
+        self.assertTrue(progress.showed_outcome_lines)
+
+    def test_never_reports_outcome_lines_without_a_terminal(self):
+        progress = TerminalProgress(StatusLine(None))
+        with progress:
+            progress.repository_started("github.com/owner/one", 1, 1)
+            progress.repository_finished({"unchanged": True})
+        self.assertFalse(progress.showed_outcome_lines)
+
+
 class RepositoryLines(unittest.TestCase):
     def setUp(self):
         self.line = Mock(spec=StatusLine)

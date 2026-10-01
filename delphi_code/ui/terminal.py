@@ -25,6 +25,7 @@ class StatusLine:
         self._started = time.monotonic()
         self._stopped = threading.Event()
         self._spinner: threading.Thread | None = None
+        self.kept_line_count = 0
 
     @classmethod
     def on_terminal(cls) -> StatusLine:
@@ -70,6 +71,7 @@ class StatusLine:
             self._erase()
             self._stream.write(_fit(f"{symbol} {self._title}  {outcome}  {self._elapsed()}") + "\n")
             self._stream.flush()
+            self.kept_line_count += 1
             self._title, self._activity, self._fraction_done = "", "", None
 
     def _spin(self):
@@ -116,6 +118,10 @@ class TerminalProgress(Progress):
 
     def __exit__(self, *exc_info):
         self._line.__exit__(*exc_info)
+
+    @property
+    def showed_outcome_lines(self) -> bool:
+        return self._line.kept_line_count > 0
 
     def owners_listing_started(self, host_name: str, owner_noun: str):
         self._line.begin(f"Listing {host_name} {owner_noun}s")
