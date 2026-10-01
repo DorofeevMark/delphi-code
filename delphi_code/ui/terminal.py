@@ -7,8 +7,8 @@ import threading
 import time
 from typing import TextIO
 
-from ..errors import Failure
-from ..progress import Progress, Stage
+from ..domain.errors import Failure
+from ..services.progress import Progress, Stage
 
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 REDRAW_SECONDS = 0.1

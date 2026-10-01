@@ -3,8 +3,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import Mock, call, patch
 
-from delphi_code.errors import ExitCode, Failure
-from delphi_code.progress import Stage
+from delphi_code.domain.errors import ExitCode, Failure
+from delphi_code.services.progress import Stage
 from delphi_code.ui.terminal import StatusLine, TerminalProgress
 
 

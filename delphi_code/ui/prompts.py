@@ -1,6 +1,6 @@
 import sys
 
-from ..errors import ExitCode, Failure
+from ..domain.errors import ExitCode, Failure
 from .repository_list import ask_repositories
 
 

@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from delphi_code.model import LocalModel
+from delphi_code.infrastructure.model import LocalModel
 
 
 class FakeModel:

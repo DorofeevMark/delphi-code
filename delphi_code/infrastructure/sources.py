@@ -6,9 +6,10 @@ import subprocess
 import tempfile
 from typing import NamedTuple
 
-from .errors import ExitCode, Failure
+from ..domain.errors import ExitCode, Failure
+from ..domain.keys import is_explicit_path, normalize_remote
 from .hosts import HOSTS_BY_DOMAIN
-from .keys import is_explicit_path, normalize_remote, project_key
+from .project_identity import project_key
 
 ASKPASS_SCRIPT = """#!/bin/sh
 case "$1" in

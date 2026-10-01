@@ -2,19 +2,20 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import UTC, datetime
-import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Protocol
 from urllib.parse import quote
 
-if TYPE_CHECKING:
-    from .model import LocalModel
-    from .selection import FileSelection
-    from .sources import Checkout
+from .selection import FileSelection
 
 SCHEMA_VERSION = 2
 LEGACY_SCHEMA_VERSION = 1
 REVISION_FIELDS = ("ref", "commit")
+
+
+class ModelIdentity(Protocol):
+    directory: Path
+    sha256: str
 
 
 class Manifest:
@@ -33,31 +34,20 @@ class Manifest:
         )
 
     @classmethod
-    def for_build(cls, checkout: Checkout, selection: FileSelection, model: LocalModel) -> Manifest:
+    def for_build(
+        cls, project: Path | None, provenance: dict, selection: FileSelection, model: ModelIdentity
+    ) -> Manifest:
         return cls(
             {
                 "schema_version": SCHEMA_VERSION,
-                "project": _optional_str(checkout.project),
-                "source": checkout.provenance,
+                "project": _optional_str(project),
+                "source": provenance,
                 "ready": False,
                 "model": str(model.directory),
                 "model_sha256": model.sha256,
                 **asdict(selection),
             }
         )
-
-    @classmethod
-    def read_if_valid_json(cls, path: Path) -> Manifest | None:
-        try:
-            fields = json.loads(path.read_text())
-        except (OSError, ValueError):
-            return None
-        return cls(fields) if isinstance(fields, dict) else None
-
-    def write(self, path: Path):
-        temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(self._fields, sort_keys=True) + "\n")
-        temporary.replace(path)
 
     @property
     def schema_version(self) -> int | None:
@@ -85,13 +75,13 @@ class Manifest:
     def revision(self) -> dict:
         return {name: self._source[name] for name in REVISION_FIELDS if name in self._source}
 
-    def was_built_with(self, model: LocalModel) -> bool:
+    def was_built_with(self, model: ModelIdentity) -> bool:
         return self._fields.get("model_sha256") == model.sha256
 
-    def conflicts_with(self, model: LocalModel) -> bool:
+    def conflicts_with(self, model: ModelIdentity) -> bool:
         return self._fields.get("model_sha256") not in (None, model.sha256)
 
-    def holds(self, commit: str, selection: FileSelection, model: LocalModel) -> bool:
+    def holds(self, commit: str, selection: FileSelection, model: ModelIdentity) -> bool:
         return (
             self.ready
             and self._source.get("commit") == commit

@@ -1,6 +1,8 @@
 from ..text_layout import TextStyle
 from .project_names import project_display_name
 
+TRACK_A_PROJECT_HINT = "Track one with: delphi-code add PATH_OR_REPOSITORY"
+
 
 class UntrackedProjectView:
     def __init__(self, key: str, was_tracked: bool, deleted_index_directory: str | None):

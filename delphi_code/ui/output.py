@@ -3,7 +3,7 @@ import json
 import os
 import sys
 
-from ..errors import Failure
+from ..domain.errors import Failure
 from .text_layout import TextStyle, TextView
 
 OUTPUT_SCHEMA_VERSION = 1

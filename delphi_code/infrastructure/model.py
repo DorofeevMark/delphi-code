@@ -7,7 +7,7 @@ from pathlib import Path
 import shlex
 from typing import TYPE_CHECKING
 
-from .errors import ExitCode, Failure
+from ..domain.errors import ExitCode, Failure
 
 if TYPE_CHECKING:
     import numpy as np

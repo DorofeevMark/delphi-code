@@ -15,11 +15,13 @@ from urllib.parse import urlsplit
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
-from delphi_code import controllers, hosts
-from delphi_code.errors import ExitCode, Failure
-from delphi_code.hosts import Bitbucket, GitHub, Owner, Repository, configured_hosts
-from delphi_code.progress import SILENT, Progress
-from delphi_code.projects import TrackingChanges
+from delphi_code.controllers import indexing as indexing_controller
+from delphi_code.controllers import repository_picking
+from delphi_code.domain.errors import ExitCode, Failure
+from delphi_code.domain.tracking_changes import TrackingChanges
+from delphi_code.infrastructure import hosts
+from delphi_code.infrastructure.hosts import Bitbucket, GitHub, Owner, Repository, configured_hosts
+from delphi_code.services.progress import SILENT, Progress
 from delphi_code.ui.prompts import TerminalPrompts
 from delphi_code.ui.repository_list import RepositoryList, repository_title
 
@@ -63,7 +65,7 @@ OCTO = [Repository("github.com", "octo", "tools", "", False)]
 
 def pick(hosts, tracked_keys, terminal=None):
     prompts = TerminalPrompts({} if terminal is None else terminal)
-    return controllers.pick_tracking_changes(hosts, tracked_keys, prompts, SILENT)
+    return repository_picking.pick_tracking_changes(hosts, tracked_keys, prompts, SILENT)
 
 
 def pick_from(owners, tracked_keys, repositories=ACME, terminal=None):
@@ -174,12 +176,12 @@ class Picking(unittest.TestCase):
             )
 
     def add_picked(self, prompts):
-        return controllers.add([], None, None, "", True, SILENT, prompts).data
+        return indexing_controller.add([], None, None, "", True, SILENT, prompts).data
 
     def test_needs_a_terminal_before_asking_for_credentials(self):
         with (
             patch.object(sys.stdin, "isatty", return_value=False),
-            patch("delphi_code.hosts.configured_hosts") as configured,
+            patch("delphi_code.infrastructure.hosts.configured_hosts") as configured,
             self.assertRaises(Failure) as raised,
         ):
             self.add_picked(TerminalPrompts())
@@ -187,7 +189,10 @@ class Picking(unittest.TestCase):
         configured.assert_not_called()
 
     def test_needs_credentials_for_some_host(self):
-        with patch("delphi_code.hosts.configured_hosts", return_value=[]), self.assertRaises(Failure) as raised:
+        with (
+            patch("delphi_code.infrastructure.hosts.configured_hosts", return_value=[]),
+            self.assertRaises(Failure) as raised,
+        ):
             self.add_picked(TerminalPrompts({}))
         self.assertEqual(raised.exception.code, "remote_auth_missing")
 
@@ -197,7 +202,7 @@ class Picking(unittest.TestCase):
         prompts = MagicMock(spec=TerminalPrompts)
         prompts.type_owner.side_effect = lambda host: progress.mock_calls.append("type_owner") or "acme"
         prompts.choose_repositories.return_value = None
-        controllers.pick_tracking_changes([FakeHost(forbidden, ACME)], set(), prompts, progress)
+        repository_picking.pick_tracking_changes([FakeHost(forbidden, ACME)], set(), prompts, progress)
         self.assertEqual(
             [str(event) for event in progress.mock_calls],
             [
@@ -413,7 +418,7 @@ class Hosts(unittest.TestCase):
             {"host": "github.com", "owner": "Octo", "slug": "api", "description": "", "private": True},
         ]
         answered = subprocess.CompletedProcess([], 0, json.dumps(listed), "")
-        with patch("delphi_code.hosts.subprocess.run", return_value=answered) as run:
+        with patch("delphi_code.infrastructure.hosts.subprocess.run", return_value=answered) as run:
             github = GitHub("Bearer x")
             self.assertEqual(github.owners(), [Owner("me", "me"), Owner("Octo", "Octo")])
             self.assertEqual(
@@ -426,7 +431,10 @@ class Hosts(unittest.TestCase):
         rejected = subprocess.CompletedProcess(
             [], 1, json.dumps({"error": {"status": 401, "message": "HTTP 401 Unauthorized"}}), ""
         )
-        with patch("delphi_code.hosts.subprocess.run", return_value=rejected), self.assertRaises(Failure) as raised:
+        with (
+            patch("delphi_code.infrastructure.hosts.subprocess.run", return_value=rejected),
+            self.assertRaises(Failure) as raised,
+        ):
             Bitbucket("Basic x").owners()
         self.assertEqual(raised.exception.code, "remote_auth_failed")
         self.assertIn("BITBUCKET_EMAIL", str(raised.exception))
@@ -441,7 +449,10 @@ class Hosts(unittest.TestCase):
             json.dumps({"error": {"status": 403, "path": "/2.0/user/workspaces", "message": "HTTP 403 lacks scopes"}}),
             "",
         )
-        with patch("delphi_code.hosts.subprocess.run", return_value=forbidden), self.assertRaises(Failure) as raised:
+        with (
+            patch("delphi_code.infrastructure.hosts.subprocess.run", return_value=forbidden),
+            self.assertRaises(Failure) as raised,
+        ):
             bitbucket.owners()
         self.assertEqual(raised.exception.code, "remote_permission_denied")
         message = str(raised.exception)
@@ -452,7 +463,7 @@ class Hosts(unittest.TestCase):
     def authorization_sent(self, host):
         self.assertTrue(host.has_api_credentials())
         answered = subprocess.CompletedProcess([], 0, "[]", "")
-        with patch("delphi_code.hosts.subprocess.run", return_value=answered) as run:
+        with patch("delphi_code.infrastructure.hosts.subprocess.run", return_value=answered) as run:
             host.owners()
         return run.call_args.kwargs["env"]["DELPHI_CODE_API_AUTHORIZATION"]
 

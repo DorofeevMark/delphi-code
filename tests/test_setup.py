@@ -8,10 +8,11 @@ import tempfile
 import unittest
 from unittest.mock import Mock, call, patch
 
-from delphi_code.errors import ExitCode, Failure
-from delphi_code.paths import data_directory
-from delphi_code.progress import Progress, Stage
-from delphi_code.setup import download, provision, verify_assets
+from delphi_code.domain.errors import ExitCode, Failure
+from delphi_code.infrastructure.model_assets import download, verify_assets
+from delphi_code.infrastructure.paths import data_directory
+from delphi_code.services.model_installation import provision
+from delphi_code.services.progress import Progress, Stage
 
 
 class Setup(unittest.TestCase):
@@ -24,7 +25,7 @@ class Setup(unittest.TestCase):
         (self.source / "model.safetensors").write_bytes(b"weights")
         self.manifest = {"sha256": {"model.safetensors": hashlib.sha256(b"weights").hexdigest()}}
         self.args = argparse.Namespace(model=str(self.root / "models/model"), source=str(self.source))
-        self.reader = patch("delphi_code.setup.json.loads", return_value=self.manifest)
+        self.reader = patch("delphi_code.infrastructure.model_assets.json.loads", return_value=self.manifest)
         self.reader.start()
         self.addCleanup(self.reader.stop)
         self.environment = patch.dict(os.environ, {"DELPHI_CODE_INDEX_ROOT": str(self.root / "indexes")})
@@ -33,8 +34,8 @@ class Setup(unittest.TestCase):
 
     def test_import_and_reuse_without_download(self):
         with (
-            patch("delphi_code.setup.diagnose", return_value={}) as doctor,
-            patch("delphi_code.setup.download") as download,
+            patch("delphi_code.services.model_installation.diagnose", return_value={}) as doctor,
+            patch("delphi_code.services.model_installation.download") as download,
         ):
             first = provision(self.args.model, self.args.source)
             self.assertFalse(first["reused"])
@@ -46,7 +47,7 @@ class Setup(unittest.TestCase):
 
     def test_reports_each_setup_stage(self):
         progress = Mock(spec=Progress)
-        with patch("delphi_code.setup.diagnose", return_value={}):
+        with patch("delphi_code.services.model_installation.diagnose", return_value={}):
             provision(self.args.model, self.args.source, progress)
             provision(self.args.model, None, progress)
         destination = Path(self.args.model).resolve()
@@ -75,7 +76,10 @@ class Setup(unittest.TestCase):
 
     def test_failed_diagnostics_does_not_publish(self):
         with (
-            patch("delphi_code.setup.diagnose", side_effect=Failure("broken", "diagnostic failed", ExitCode.OPERATION)),
+            patch(
+                "delphi_code.services.model_installation.diagnose",
+                side_effect=Failure("broken", "diagnostic failed", ExitCode.OPERATION),
+            ),
             self.assertRaises(Failure),
         ):
             provision(self.args.model, self.args.source)
@@ -89,8 +93,8 @@ class Setup(unittest.TestCase):
             (destination / "model.safetensors").write_bytes(b"bad download")
 
         with (
-            patch("delphi_code.setup.download", side_effect=fake_download),
-            patch("delphi_code.setup.diagnose") as doctor,
+            patch("delphi_code.services.model_installation.download", side_effect=fake_download),
+            patch("delphi_code.services.model_installation.diagnose") as doctor,
         ):
             with self.assertRaisesRegex(Failure, "checksum"):
                 provision(self.args.model, self.args.source)
@@ -106,7 +110,7 @@ class Setup(unittest.TestCase):
                 provision(self.args.model, self.args.source)
 
     def test_download_process_has_online_environment(self):
-        with patch("delphi_code.setup.subprocess.run") as run:
+        with patch("delphi_code.infrastructure.model_assets.subprocess.run") as run:
             run.return_value.returncode = 0
             download(self.root / "download")
             command = run.call_args.args[0]
@@ -115,7 +119,7 @@ class Setup(unittest.TestCase):
             self.assertEqual(os.environ["HF_HUB_OFFLINE"], "1")
 
     def test_download_process_failure_has_recovery(self):
-        with patch("delphi_code.setup.subprocess.run") as run:
+        with patch("delphi_code.infrastructure.model_assets.subprocess.run") as run:
             run.return_value.returncode = 1
             run.return_value.stderr = "Fetching files\nConnectionError: host unreachable\n"
             with self.assertRaisesRegex(Failure, r"\(ConnectionError: host unreachable\).*delphi-code setup --from"):
@@ -143,12 +147,12 @@ class Setup(unittest.TestCase):
 class Storage(unittest.TestCase):
     def test_platform_defaults(self):
         with (
-            patch("delphi_code.paths.Path.home", return_value=Path("/home/test")),
-            patch("delphi_code.paths.sys.platform", "darwin"),
+            patch("delphi_code.infrastructure.paths.Path.home", return_value=Path("/home/test")),
+            patch("delphi_code.infrastructure.paths.sys.platform", "darwin"),
         ):
             self.assertEqual(data_directory(), Path("/home/test/Library/Application Support/delphi-code"))
         with (
-            patch("delphi_code.paths.sys.platform", "linux"),
+            patch("delphi_code.infrastructure.paths.sys.platform", "linux"),
             patch.dict(os.environ, {"XDG_DATA_HOME": "/tmp/custom-data"}),
         ):
             self.assertEqual(data_directory(), Path("/tmp/custom-data/delphi-code").resolve())

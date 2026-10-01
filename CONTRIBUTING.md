@@ -16,20 +16,20 @@ uv pip install --group dev
 
 The aim is code a newcomer can read top to bottom without a guide.
 
-**Layers.** Each module has one job, and dependencies point downward:
+**Layers.** Each folder is one layer, and dependencies point downward; `tests/test_layers.py` enforces the direction:
 
-| Layer | Modules | Knows about |
+| Layer | Location | Knows about |
 |---|---|---|
-| Entry point | `cli.py` | argparse, and the concrete UI handed to each controller |
-| User interface | `ui/output.py`, `ui/terminal.py`, `ui/prompts.py`, `ui/repository_list.py` | JSON output, the progress line, and single questions; only the ports and foundations below |
-| Controllers | `controllers.py` | one function per command; coordinates services with the `Progress` and `Prompts` ports |
-| Services | `projects.py`, `doctor.py`, `setup.py` | what a command does, expressed through domain objects |
-| Domain | `store.py`, `manifest.py`, `registry.py`, `sources.py`, `hosts.py`, `model.py`, `selection.py`, `files.py`, `indexing.py` | one concept each |
-| Foundations | `errors.py`, `keys.py`, `paths.py`, `offline.py`, `progress.py` | nothing above them |
+| Entry point | `cli.py` | argparse; picks the concrete UI, calls one controller, writes its data as JSON or its views as text |
+| Controllers | `controllers/` | one function per command: calls services, asks through the `Prompts` port (`controllers/repository_picking.py`), and builds the views for its result |
+| User interface | `ui/` | `text_layout.py` (generic terminal text), `views/` (how domain concepts look), `output.py`, `terminal.py`, `prompts.py`, `repository_list.py`; only `domain.errors` and `services.progress` below it |
+| Services | `services/` | what a command does: `indexing`, `searching`, `tracking`, `project_catalog`, `model_installation`, `diagnostics`, plus the `Progress` port |
+| Infrastructure | `infrastructure/` | disk, git, network and libraries: `store`, `registry`, `model`, `vector_index`, `files`, `sources`, `hosts`, `project_identity`, `model_assets`, `paths`, `offline` |
+| Domain | `domain/` | pure rules with no I/O: `errors`, `keys`, `manifest`, `selection`, `tracking_changes` |
 
-Lower layers never import `cli`, and no module below `cli` sees an `argparse.Namespace`.
+Lower layers never import `cli`, and no module below `cli` sees an `argparse.Namespace`. `infrastructure/hosts.py` and `infrastructure/model_download.py` also run as standalone scripts in a separate process, so they never import package modules unconditionally (`hosts.py` imports `domain.errors` only under `if __package__`).
 
-**User interface.** Controllers, services, and the domain never import `ui/` and never write to the terminal; `tests/test_layers.py` enforces it. They depend on two ports instead. `Progress` (`progress.py`) receives events and does nothing by default; `ui/terminal.py` draws them. `Prompts` (`controllers.py`) asks single questions; `ui/prompts.py` answers them in the terminal. A controller decides what is asked and when, gathers every decision first, and then calls one service command such as `projects.apply_tracking_changes`, so services never ask. Each controller takes only the ports it uses, and `cli.py` is the one place that picks their implementations. A new frontend implements the two ports and reuses every controller unchanged.
+**User interface.** Services, infrastructure and the domain never import `ui/` and never write to the terminal. Controllers import only `ui/views/` and `ui/text_layout.py`, to build views. They depend on two ports instead of the terminal. `Progress` (`services/progress.py`) receives events and does nothing by default; `ui/terminal.py` draws them. `Prompts` (`controllers/repository_picking.py`) asks single questions; `ui/prompts.py` answers them in the terminal. A controller decides what is asked and when, gathers every decision first, and then calls one service command such as `tracking.apply_tracking_changes`, so services never ask. Each controller returns a `ControllerResponse` with the data for JSON output and the views for text output. `cli.py` is the one place that picks port implementations and the output format.
 
 **Interfaces.**
 - Hide representations behind objects. Callers ask `manifest.ready` or `index.search(...)`; they never reach into JSON dicts or SQL.

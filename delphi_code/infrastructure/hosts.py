@@ -12,7 +12,7 @@ from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 if __package__:
-    from .errors import ExitCode, Failure
+    from ..domain.errors import ExitCode, Failure
 
 PAGE_LENGTH = 100
 REQUEST_TIMEOUT_SECONDS = 60

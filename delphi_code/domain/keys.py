@@ -1,7 +1,6 @@
-import os
+from collections.abc import Callable
 from pathlib import Path
 import re
-import subprocess
 from urllib.parse import urlsplit
 
 from .errors import ExitCode, Failure
@@ -27,32 +26,6 @@ def local_key(path):
     return f"local:{path}"
 
 
-def project_key(path):
-    if not path.is_dir():
-        return local_key(path)
-    repository_root, origin = (
-        git_output(path, "rev-parse", "--show-toplevel"),
-        git_output(path, "remote", "get-url", "origin"),
-    )
-    is_repository_root = repository_root is not None and Path(repository_root).resolve() == path
-    remote_key = normalize_remote(origin) if is_repository_root and origin else None
-    return remote_key or local_key(path)
-
-
-def git_output(directory, *args):
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(directory), *args],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env=dict(os.environ, GIT_TERMINAL_PROMPT="0"),
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return result.stdout.strip() if result.returncode == 0 else None
-
-
 def is_explicit_path(name):
     return name.startswith(("/", ".", "~"))
 
@@ -67,10 +40,10 @@ def names_key(name, key, project):
     )
 
 
-def match_key(name, candidates):
+def match_key(name, candidates, project_key_of_path: Callable[[Path], str]):
     if is_explicit_path(name):
         path = Path(name).expanduser().resolve()
-        key = project_key(path)
+        key = project_key_of_path(path)
         matches = {candidate for candidate, project in candidates if candidate == key or project == path}
     else:
         matches = {candidate for candidate, project in candidates if names_key(name, candidate, project)}

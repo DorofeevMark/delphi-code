@@ -4,13 +4,13 @@ import os
 from pathlib import Path
 import sys
 
-from . import controllers
-from .controllers import ControllerResponse
-from .errors import ExitCode, Failure
-from .paths import model_directory
-from .progress import Progress
-from .projects import SearchRequest
-from .selection import DEFAULT_MAX_BYTES, FileSelection
+from .controllers import indexing, installation, project_catalog, searching
+from .controllers.response import ControllerResponse
+from .domain.errors import ExitCode, Failure
+from .domain.selection import DEFAULT_MAX_BYTES, FileSelection
+from .infrastructure.paths import model_directory
+from .services.progress import Progress
+from .services.searching import SearchRequest
 from .ui import output
 from .ui.prompts import TerminalPrompts
 from .ui.terminal import TerminalProgress
@@ -98,19 +98,19 @@ def main():
 
 
 COMMANDS: dict[str, Callable[[argparse.Namespace, Progress], ControllerResponse]] = {
-    "index": lambda args, progress: controllers.index(args.project, _selection(args), args.model, progress),
-    "search": lambda args, progress: controllers.search(
+    "index": lambda args, progress: indexing.index(args.project, _selection(args), args.model, progress),
+    "search": lambda args, progress: searching.search(
         args.project, SearchRequest(args.query, args.path, args.language, args.limit), args.model
     ),
-    "status": lambda args, progress: controllers.status(args.project),
-    "doctor": lambda args, progress: controllers.doctor(args.project, args.model),
-    "add": lambda args, progress: controllers.add(
+    "status": lambda args, progress: project_catalog.status(args.project),
+    "doctor": lambda args, progress: installation.doctor(args.project, args.model),
+    "add": lambda args, progress: indexing.add(
         args.sources, args.ref, _selection(args), args.model, not args.no_sync, progress, TerminalPrompts()
     ),
-    "sync": lambda args, progress: controllers.sync(args.model, progress),
-    "list": lambda args, progress: controllers.list_tracked(),
-    "remove": lambda args, progress: controllers.remove(args.name, args.keep_index),
-    "setup": lambda args, progress: controllers.setup(args.model, args.source, progress),
+    "sync": lambda args, progress: indexing.sync(args.model, progress),
+    "list": lambda args, progress: project_catalog.list_tracked(),
+    "remove": lambda args, progress: project_catalog.remove(args.name, args.keep_index),
+    "setup": lambda args, progress: installation.setup(args.model, args.source, progress),
 }
 
 

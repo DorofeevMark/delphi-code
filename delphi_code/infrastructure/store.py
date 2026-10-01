@@ -5,17 +5,19 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 import fcntl
 import fnmatch
+import json
 from pathlib import Path
 import secrets
 import shutil
 import sqlite3
 from typing import NamedTuple
 
-from .errors import ExitCode, Failure
-from .keys import is_explicit_path, local_key, match_key, project_key
-from .manifest import LEGACY_SCHEMA_VERSION, SCHEMA_VERSION, Manifest
+from ..domain.errors import ExitCode, Failure
+from ..domain.keys import is_explicit_path, local_key, match_key
+from ..domain.manifest import LEGACY_SCHEMA_VERSION, SCHEMA_VERSION, Manifest
 from .model import LocalModel
 from .paths import index_root
+from .project_identity import project_key
 
 
 def require_sqlite_extensions():
@@ -51,7 +53,7 @@ class Index:
 
     @classmethod
     def load_if_keyed(cls, directory: Path) -> Index | None:
-        manifest = Manifest.read_if_valid_json(directory / "manifest.json")
+        manifest = _read_manifest_if_valid_json(directory / "manifest.json")
         if manifest is None or manifest.key is None:
             return None
         return cls(directory, manifest.key, manifest.project, manifest)
@@ -73,7 +75,7 @@ class Index:
             raise Failure("index_missing", "No index exists; run index first", ExitCode.INDEX_STATE) from exc
 
     def read_manifest(self) -> Manifest:
-        manifest = Manifest.read_if_valid_json(self._manifest_path)
+        manifest = _read_manifest_if_valid_json(self._manifest_path)
         if manifest is None:
             raise Failure("index_missing", "No completed index exists; run index first", ExitCode.INDEX_STATE)
         if manifest.schema_version != SCHEMA_VERSION:
@@ -81,7 +83,7 @@ class Index:
         return manifest
 
     def write_manifest(self, manifest: Manifest):
-        manifest.write(self._manifest_path)
+        _write_manifest(manifest, self._manifest_path)
 
     def read_manifest_compatible_with(self, model: LocalModel) -> Manifest:
         manifest = self.read_manifest()
@@ -178,7 +180,7 @@ class Store:
         name = str(name)
         if not is_explicit_path(name):
             indexes = self.all()
-            key = match_key(name, [(index.key, index.project) for index in indexes])
+            key = match_key(name, [(index.key, index.project) for index in indexes], project_key)
             if key:
                 index = next(index for index in indexes if index.key == key)
                 return ResolvedProject(index.project, key, index)
@@ -198,7 +200,7 @@ class Store:
         for manifest_path in sorted(self.root.glob("*/manifest.json")):
             if index := Index.load_if_keyed(manifest_path.parent):
                 indexes.append(index)
-            elif _is_legacy(Manifest.read_if_valid_json(manifest_path)):
+            elif _is_legacy(_read_manifest_if_valid_json(manifest_path)):
                 legacy_directories.append(manifest_path.parent)
         return indexes, legacy_directories
 
@@ -217,7 +219,7 @@ def _upgrade_legacy_index(directory: Path, taken_keys: set[str]) -> Index | None
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return None
-        legacy = Manifest.read_if_valid_json(directory / "manifest.json")
+        legacy = _read_manifest_if_valid_json(directory / "manifest.json")
         if legacy is None or legacy.project is None or not _is_legacy(legacy):
             return None
         key = project_key(legacy.project)
@@ -234,3 +236,17 @@ def _is_legacy(manifest: Manifest | None) -> bool:
 
 def _cosine_similarity_of_unit_vectors(l2_distance: float) -> float:
     return max(-1.0, min(1.0, 1.0 - l2_distance**2 / 2.0))
+
+
+def _read_manifest_if_valid_json(path: Path) -> Manifest | None:
+    try:
+        fields = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return Manifest(fields) if isinstance(fields, dict) else None
+
+
+def _write_manifest(manifest: Manifest, path: Path):
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(manifest.to_json(), sort_keys=True) + "\n")
+    temporary.replace(path)

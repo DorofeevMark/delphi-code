@@ -10,10 +10,10 @@ import json
 from pathlib import Path
 import tomllib
 
-from .errors import ExitCode, Failure
-from .keys import local_key
+from ..domain.errors import ExitCode, Failure
+from ..domain.keys import local_key
+from ..domain.selection import FileSelection
 from .paths import registry_path
-from .selection import FileSelection
 from .sources import LocalSource, Source, source_from_registry
 
 TOML_FIELDS = ("source", "key", "ref", "paths", "languages", "ignores", "max_bytes")

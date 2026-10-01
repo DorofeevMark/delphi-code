@@ -3,43 +3,39 @@ from pathlib import Path
 import unittest
 
 PACKAGE = Path(__file__).resolve().parent.parent / "delphi_code"
-WIRING = {"cli.py", "__main__.py"}
 UI_LIBRARIES = {"questionary", "prompt_toolkit", "rich", "tqdm"}
 TERMINAL_STREAMS = {"stdout", "stderr"}
-PORTS_AND_FOUNDATIONS_FOR_UI = {"errors", "progress"}
+PORTS_AND_FOUNDATIONS_FOR_UI = ("domain.errors", "services.progress")
+VIEW_BUILDING_BLOCKS_FOR_CONTROLLERS = ("ui.views", "ui.text_layout")
+LAYERS_EACH_LAYER_MAY_IMPORT = {
+    "domain": {"domain"},
+    "infrastructure": {"domain", "infrastructure"},
+    "services": {"domain", "infrastructure", "services"},
+    "controllers": {"domain", "infrastructure", "services", "controllers", "ui"},
+    "ui": {"ui", "domain", "services"},
+}
+LAYERS_WITHOUT_TERMINAL_ACCESS = ("domain", "infrastructure", "services", "controllers")
 
 
-def parsed(paths):
-    return [(path, ast.parse(path.read_text())) for path in paths]
+def modules_of(layer):
+    return [(path, ast.parse(path.read_text())) for path in sorted((PACKAGE / layer).rglob("*.py"))]
 
 
-def below_wiring():
-    return parsed(path for path in PACKAGE.glob("*.py") if path.name not in WIRING)
-
-
-def user_interface():
-    return parsed(PACKAGE.glob("ui/**/*.py"))
-
-
-def package_module_imported(path, relative_import):
-    level = len(relative_import) - len(relative_import.lstrip("."))
+def package_imports(path, tree):
     importing_package = path.parent.relative_to(PACKAGE).parts
-    base_package = importing_package[: len(importing_package) - (level - 1)]
-    return ".".join([*base_package, relative_import.lstrip(".")]).strip(".")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level:
+            base_package = importing_package[: len(importing_package) - (node.level - 1)]
+            module = ".".join([*base_package, *(node.module or "").split(".")]).strip(".")
+            yield from (f"{module}.{alias.name}".strip(".") for alias in node.names)
 
 
-def imported_modules(tree):
+def third_party_imports(tree):
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            yield from (alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            module = node.module or ""
-            yield "." * node.level + module
-            yield from ("." * node.level + f"{module}.{alias.name}".lstrip(".") for alias in node.names)
-
-
-def first_part(name):
-    return name.lstrip(".").split(".")[0]
+            yield from (alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+            yield node.module.split(".")[0]
 
 
 def terminal_uses(tree):
@@ -55,41 +51,33 @@ def terminal_uses(tree):
 
 
 class Layers(unittest.TestCase):
-    def test_domain_never_imports_the_ui(self):
-        for path, tree in below_wiring():
-            if path.name != "controllers.py":
-                for name in imported_modules(tree):
-                    with self.subTest(module=path.name, imports=name):
-                        self.assertNotIn(first_part(name), UI_LIBRARIES | {"ui", "cli"})
-
-    def test_controllers_build_views_without_terminal_libraries_or_wiring(self):
-        controllers = PACKAGE / "controllers.py"
-        for name in imported_modules(ast.parse(controllers.read_text())):
-            with self.subTest(imports=name):
-                self.assertNotIn(first_part(name), UI_LIBRARIES | {"cli"})
-                if first_part(name) == "ui":
-                    self.assertTrue(name.lstrip(".").startswith(("ui.views", "ui.text_layout")), name)
-
-    def test_controllers_and_domain_never_touch_the_terminal(self):
-        for path, tree in below_wiring():
-            with self.subTest(module=path.name):
-                self.assertEqual(terminal_uses(tree), [])
-
-    def test_domain_never_imports_controllers(self):
-        for path, tree in below_wiring():
-            if path.name != "controllers.py":
-                with self.subTest(module=path.name):
-                    self.assertNotIn("controllers", map(first_part, imported_modules(tree)))
+    def test_each_layer_imports_only_the_layers_beneath_it(self):
+        for layer, allowed_layers in LAYERS_EACH_LAYER_MAY_IMPORT.items():
+            for path, tree in modules_of(layer):
+                for imported in package_imports(path, tree):
+                    with self.subTest(module=str(path.relative_to(PACKAGE)), imports=imported):
+                        self.assertIn(imported.split(".")[0], allowed_layers)
 
     def test_ui_knows_only_ports_and_foundations(self):
-        for path, tree in user_interface():
-            for name in imported_modules(tree):
-                if not name.startswith("."):
-                    continue
-                imported = package_module_imported(path, name)
-                if first_part(imported) != "ui":
-                    with self.subTest(module=str(path.relative_to(PACKAGE)), imports=name):
-                        self.assertIn(first_part(imported), PORTS_AND_FOUNDATIONS_FOR_UI)
+        for path, tree in modules_of("ui"):
+            for imported in package_imports(path, tree):
+                if not imported.startswith("ui."):
+                    with self.subTest(module=str(path.relative_to(PACKAGE)), imports=imported):
+                        self.assertTrue(imported.startswith(PORTS_AND_FOUNDATIONS_FOR_UI), imported)
+
+    def test_controllers_use_only_views_from_the_ui(self):
+        for path, tree in modules_of("controllers"):
+            for imported in package_imports(path, tree):
+                if imported.startswith("ui."):
+                    with self.subTest(module=path.name, imports=imported):
+                        self.assertTrue(imported.startswith(VIEW_BUILDING_BLOCKS_FOR_CONTROLLERS), imported)
+
+    def test_only_the_ui_uses_terminal_libraries_and_streams(self):
+        for layer in LAYERS_WITHOUT_TERMINAL_ACCESS:
+            for path, tree in modules_of(layer):
+                with self.subTest(module=str(path.relative_to(PACKAGE))):
+                    self.assertFalse(UI_LIBRARIES & set(third_party_imports(tree)))
+                    self.assertEqual(terminal_uses(tree), [])
 
 
 if __name__ == "__main__":

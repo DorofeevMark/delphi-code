@@ -8,14 +8,14 @@ from unittest.mock import patch
 
 from fakes import use_fake_model
 
-from delphi_code import projects
 from delphi_code.cli import arguments, execute
-from delphi_code.errors import Failure
-from delphi_code.keys import local_key
-from delphi_code.progress import Progress
-from delphi_code.registry import Entry, Registry
-from delphi_code.selection import FileSelection
-from delphi_code.store import Store
+from delphi_code.domain.errors import Failure
+from delphi_code.domain.keys import local_key
+from delphi_code.domain.selection import FileSelection
+from delphi_code.infrastructure.registry import Entry, Registry
+from delphi_code.infrastructure.store import Store
+from delphi_code.services import indexing
+from delphi_code.services.progress import Progress
 
 
 class RegistryCommands(unittest.TestCase):
@@ -39,7 +39,7 @@ class RegistryCommands(unittest.TestCase):
             index = store.get_or_create(key, checkout.project)
             return {"project": str(checkout.project), "key": key, "index_directory": str(index.directory)}
 
-        self.enterContext(patch("delphi_code.projects.index_checkout", side_effect=index_checkout))
+        self.enterContext(patch("delphi_code.services.indexing.index_checkout", side_effect=index_checkout))
 
     def run_command(self, *args):
         with patch.object(sys, "argv", ["delphi-code", *args]):
@@ -107,7 +107,7 @@ class RegistryCommands(unittest.TestCase):
 
         registry = Registry()
         with self.assertRaises(Failure):
-            projects.sync(Store(), registry, registry.entries(), str(self.root / "model"), Recorder())
+            indexing.sync(Store(), registry, registry.entries(), str(self.root / "model"), Recorder())
         self.assertEqual(
             events,
             [

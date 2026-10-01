@@ -10,7 +10,7 @@ from cocoindex.resources.schema import VectorSchema
 import numpy as np
 from numpy.typing import NDArray
 
-from .errors import ExitCode, Failure
+from ..domain.errors import ExitCode, Failure
 from .files import SourceFile
 from .model import LocalModel
 

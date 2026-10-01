@@ -29,7 +29,7 @@ class ModelIdentity(unittest.TestCase):
         import json
         import tempfile
 
-        from delphi_code.model import LocalModel
+        from delphi_code.infrastructure.model import LocalModel
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

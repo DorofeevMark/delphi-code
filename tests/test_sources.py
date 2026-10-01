@@ -9,13 +9,13 @@ from unittest.mock import patch
 from fakes import use_fake_model
 
 from delphi_code.cli import arguments, execute
-from delphi_code.errors import Failure
-from delphi_code.hosts import Bitbucket, GitHub
-from delphi_code.manifest import Manifest
-from delphi_code.projects import TrackingChanges
-from delphi_code.registry import Registry
-from delphi_code.sources import GitRemoteSource, LocalSource, source_from_argument, source_from_registry
-from delphi_code.store import Store
+from delphi_code.domain.errors import Failure
+from delphi_code.domain.manifest import Manifest
+from delphi_code.domain.tracking_changes import TrackingChanges
+from delphi_code.infrastructure.hosts import Bitbucket, GitHub
+from delphi_code.infrastructure.registry import Registry
+from delphi_code.infrastructure.sources import GitRemoteSource, LocalSource, source_from_argument, source_from_registry
+from delphi_code.infrastructure.store import Store
 
 
 def git(*args, cwd=None):
@@ -136,7 +136,7 @@ class RemoteGitCheckouts(LocalHostWithApiRepository):
             calls.append((command, answers))
             return real(command, **options)
 
-        with patch("delphi_code.sources.subprocess.run", side_effect=run):
+        with patch("delphi_code.infrastructure.sources.subprocess.run", side_effect=run):
             source.latest_revision(None)
         return calls[0]
 
@@ -184,7 +184,7 @@ class RemoteSync(LocalHostWithApiRepository):
         def index_checkout(store, checkout, options, model, progress):
             self.checkouts.append(checkout)
             index = store.get_or_create(checkout.key, checkout.project)
-            index.write_manifest(Manifest.for_build(checkout, options, model).completed())
+            index.write_manifest(Manifest.for_build(checkout.project, checkout.provenance, options, model).completed())
             return {
                 "project": None,
                 "key": index.key,
@@ -192,7 +192,7 @@ class RemoteSync(LocalHostWithApiRepository):
                 "commit": checkout.provenance.get("commit"),
             }
 
-        self.enterContext(patch("delphi_code.projects.index_checkout", side_effect=index_checkout))
+        self.enterContext(patch("delphi_code.services.indexing.index_checkout", side_effect=index_checkout))
 
     def run_command(self, *args):
         with patch.object(sys, "argv", ["delphi-code", *args]):
@@ -235,8 +235,10 @@ class RemoteSync(LocalHostWithApiRepository):
 
     def pick(self, changes):
         self.enterContext(patch("delphi_code.ui.prompts.TerminalPrompts.require_terminal"))
-        self.enterContext(patch("delphi_code.hosts.configured_hosts", return_value=["host"]))
-        return self.enterContext(patch("delphi_code.controllers.pick_tracking_changes", return_value=changes))
+        self.enterContext(patch("delphi_code.infrastructure.hosts.configured_hosts", return_value=["host"]))
+        return self.enterContext(
+            patch("delphi_code.controllers.repository_picking.pick_tracking_changes", return_value=changes)
+        )
 
     def test_add_without_sources_needs_a_terminal(self):
         with patch.object(sys.stdin, "isatty", return_value=False), self.assertRaises(Failure) as raised:

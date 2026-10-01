@@ -4,15 +4,16 @@ from pathlib import Path
 import sqlite3
 import tempfile
 
-from .projects import open_model, resolve_existing
-from .store import Store, vector_database
+from ..infrastructure.store import Store, vector_database
+from .local_model import open_model
+from .project_catalog import resolve_existing
 
 REPORTED_DEPENDENCIES = ("cocoindex", "sqlite-vec", "sentence-transformers", "torch")
 PROBE_TEXT = "local code search"
 
 
 def diagnose(model_location: str, store: Store, project_name: str) -> dict:
-    from .indexing import check_storage
+    from ..infrastructure.vector_index import check_storage
 
     project, key, index = resolve_existing(store, project_name)
     model = open_model(model_location)

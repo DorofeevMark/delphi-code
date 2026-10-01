@@ -2,9 +2,9 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from delphi_code.errors import Failure
-from delphi_code.keys import local_key
-from delphi_code.store import Store
+from delphi_code.domain.errors import Failure
+from delphi_code.domain.keys import local_key
+from delphi_code.infrastructure.store import Store
 
 
 class ProjectNames(unittest.TestCase):

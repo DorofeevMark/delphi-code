@@ -6,9 +6,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from delphi_code.keys import normalize_remote, project_key
-from delphi_code.paths import data_directory, index_root
-from delphi_code.store import Store
+from delphi_code.domain.keys import normalize_remote
+from delphi_code.infrastructure.paths import data_directory, index_root
+from delphi_code.infrastructure.project_identity import project_key
+from delphi_code.infrastructure.store import Store
 
 
 def git(project, *args):

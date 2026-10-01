@@ -5,7 +5,7 @@ from typing import NamedTuple
 
 from pathspec import GitIgnoreSpec
 
-from .selection import FileSelection
+from ..domain.selection import FileSelection
 
 ALWAYS_EXCLUDED_NAMES = {".git", ".delphi-code", ".venv", "venv", "node_modules", "__pycache__", ".models"}
 IGNORE_FILE_NAMES = (".gitignore", ".delphi-codeignore")

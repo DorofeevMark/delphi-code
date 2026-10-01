@@ -1,7 +1,7 @@
 from enum import StrEnum
 from pathlib import Path
 
-from .errors import Failure
+from ..domain.errors import Failure
 
 
 class Stage(StrEnum):
