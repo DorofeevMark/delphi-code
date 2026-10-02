@@ -32,6 +32,19 @@ class StatusLines(unittest.TestCase):
         self.assertTrue(any("10/10 files ██" in frame for frame in frames))
         self.assertTrue(frames[-1].startswith("✓ [1/2] github.com/owner/repository  10 files, 40 chunks"))
 
+    def test_shows_elapsed_time_only_for_slow_operations(self):
+        stream = io.StringIO()
+        with patch("delphi_code.ui.terminal.time.monotonic", side_effect=[0, 100, 101, 200, 275]):
+            progress = StatusLine(stream)
+            progress.begin("fast")
+            progress.end("✓", "unchanged")
+            progress.begin("slow")
+            progress.end("✓", "9 files, 30 chunks")
+        self.assertEqual(
+            stream.getvalue().replace("\r\033[K", "").splitlines(),
+            ["✓ fast  unchanged", "✓ slow  9 files, 30 chunks  1:15"],
+        )
+
 
 class OutcomeLines(unittest.TestCase):
     def test_reports_outcome_lines_only_once_one_was_kept(self):

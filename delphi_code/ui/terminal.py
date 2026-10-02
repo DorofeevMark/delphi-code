@@ -13,6 +13,7 @@ from ..services.progress import Progress, Stage
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 REDRAW_SECONDS = 0.1
 MAX_BAR_WIDTH = 30
+ELAPSED_SHOWN_FROM_SECONDS = 3
 
 
 class StatusLine:
@@ -69,7 +70,7 @@ class StatusLine:
             if self._stream is None:
                 return
             self._erase()
-            self._stream.write(_fit(f"{symbol} {self._title}  {outcome}  {self._elapsed()}") + "\n")
+            self._stream.write(_fit(f"{symbol} {self._title}  {outcome}{self._elapsed_suffix()}") + "\n")
             self._stream.flush()
             self.kept_line_count += 1
             self._title, self._activity, self._fraction_done = "", "", None
@@ -85,7 +86,7 @@ class StatusLine:
     def _draw(self, spinner: str):
         assert self._stream is not None
         line = f"{spinner} {self._title}" + (f"  {self._activity}" if self._activity else "")
-        elapsed = f"  {self._elapsed()}"
+        elapsed = self._elapsed_suffix()
         if self._fraction_done is not None:
             bar_width = min(MAX_BAR_WIDTH, _columns() - len(line) - len(elapsed) - 1)
             if bar_width >= 5:
@@ -99,9 +100,12 @@ class StatusLine:
             self._stream.write("\r\033[K")
             self._stream.flush()
 
-    def _elapsed(self) -> str:
-        minutes, seconds = divmod(int(time.monotonic() - self._started), 60)
-        return f"{minutes}:{seconds:02d}"
+    def _elapsed_suffix(self) -> str:
+        elapsed_seconds = int(time.monotonic() - self._started)
+        if elapsed_seconds < ELAPSED_SHOWN_FROM_SECONDS:
+            return ""
+        minutes, seconds = divmod(elapsed_seconds, 60)
+        return f"  {minutes}:{seconds:02d}"
 
 
 class TerminalProgress(Progress):
