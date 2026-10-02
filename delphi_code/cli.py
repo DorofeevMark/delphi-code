@@ -1,13 +1,16 @@
 import argparse
 from collections.abc import Callable
+import logging
 import os
 from pathlib import Path
 import sys
+import time
 
 from .controllers import indexing, installation, project_catalog, searching
 from .controllers.response import ControllerResponse
 from .domain.errors import ExitCode, Failure
 from .domain.selection import DEFAULT_MAX_BYTES, FileSelection
+from .infrastructure.log_file import write_logs_to_file
 from .infrastructure.paths import model_directory
 from .services.progress import Progress
 from .services.searching import SearchRequest
@@ -16,6 +19,7 @@ from .ui.prompts import TerminalPrompts
 from .ui.terminal import TerminalProgress
 
 MAX_SEARCH_LIMIT = 1000
+logger = logging.getLogger(__name__)
 
 
 class Parser(argparse.ArgumentParser):
@@ -86,18 +90,24 @@ def execute(args: argparse.Namespace, progress: TerminalProgress | None = None) 
 
 
 def main():
+    write_logs_to_file()
+    started = time.monotonic()
     command, write_json = None, output.json_output_requested(json_flag="--json" in sys.argv[1:])
     progress = TerminalProgress.on_terminal()
     try:
         args = arguments()
         command, write_json = args.command, output.json_output_requested(json_flag=args.json)
+        logger.info("%s started in %s", command, Path.cwd())
+        logger.debug("%s arguments: %s", command, vars(args))
         with output.stdout_reserved_for_result():
             response = execute(args, progress)
     except Exception as exc:
         failure = output.failure_of(exc)
+        _log_failure(command, exc, failure, time.monotonic() - started)
         if write_json:
             raise SystemExit(output.write_json_failure(command, failure)) from None
         raise SystemExit(output.write_text_failure(failure)) from None
+    logger.info("%s succeeded in %.2fs", command, time.monotonic() - started)
     if write_json:
         raise SystemExit(output.write_json_success(command, response.data))
     raise SystemExit(output.write_text_success(response.views))
@@ -118,6 +128,14 @@ COMMANDS: dict[str, Callable[[argparse.Namespace, Progress], ControllerResponse]
     "remove": lambda args, progress: project_catalog.remove(args.name, args.keep_index),
     "setup": lambda args, progress: installation.setup(args.model, args.source, progress),
 }
+
+
+def _log_failure(command: str | None, exc: Exception, failure: Failure, seconds: float):
+    message = "%s failed in %.2fs with %s: %s"
+    if isinstance(exc, Failure):
+        logger.warning(message, command, seconds, failure.code, failure, exc_info=exc.__cause__ is not None)
+    else:
+        logger.exception(message, command, seconds, failure.code, failure)
 
 
 def _selection(args) -> FileSelection:

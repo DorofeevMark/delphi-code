@@ -264,6 +264,15 @@ A project's key decides which index it uses:
 - Moving a project that has no Git remote changes its key, and indexing it again builds a new index.
 - To switch model assets or rebuild incompatible state, move that `index_directory` aside and run `index` again.
 
+## Logs
+
+Every command appends to a local log file: what ran, how long it took, and, for failures, the full traceback. Nothing is sent anywhere.
+
+- macOS: `~/Library/Application Support/delphi-code/logs/delphi-code.log`
+- Linux: `$XDG_DATA_HOME/delphi-code/logs/delphi-code.log`, or `~/.local/share/delphi-code/logs/delphi-code.log`
+
+The file rotates at 1 MB and keeps three older files. `DELPHI_CODE_LOG_FILE` overrides the location, and `DELPHI_CODE_LOG_LEVEL` sets the level (`DEBUG`, `INFO` by default, `WARNING`, `ERROR`, or `OFF`). `DEBUG` also records each command's arguments, including search queries. Third-party libraries log only warnings and errors. If the log file cannot be written, commands run without logging.
+
 ## Offline guarantees
 
 Before any third-party import, the CLI disables CocoIndex usage tracking and Hugging Face telemetry, and sets the Hub and Transformers offline flags. Models load only from an existing local directory with `local_files_only=True`, `trust_remote_code=False`, and safetensors weights.

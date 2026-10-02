@@ -38,6 +38,7 @@ class OfflineCLI(unittest.TestCase):
             PYTHONPATH=os.pathsep.join([str(cls.audit), str(ROOT)]),
             DELPHI_CODE_INDEX_ROOT=str(cls.index_root),
             DELPHI_CODE_REGISTRY=str(cls.base / "repos.toml"),
+            DELPHI_CODE_LOG_FILE=str(cls.base / "delphi-code.log"),
             HF_HOME=str(cls.base / "empty-hf-cache"),
             DELPHI_CODE_NETWORK_LOG=str(cls.network_log),
             COCOINDEX_DISABLE_USAGE_TRACKING="0",

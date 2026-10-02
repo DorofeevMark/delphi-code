@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 from functools import cached_property
+import logging
 import os
 from pathlib import Path
 import subprocess
@@ -10,6 +11,8 @@ from ..domain.errors import ExitCode, Failure
 from ..domain.keys import is_explicit_path, normalize_remote
 from .hosts import HOSTS_BY_DOMAIN
 from .project_identity import project_key
+
+logger = logging.getLogger(__name__)
 
 ASKPASS_SCRIPT = """#!/bin/sh
 case "$1" in
@@ -161,6 +164,7 @@ def run_git(args, key, credentials, credentials_hint):
             ) from exc
     if result.returncode == 0:
         return result.stdout
+    logger.warning("git %s for %s exited with %d: %s", args[0], key, result.returncode, result.stderr.strip())
     last_error_line = (
         result.stderr.strip().splitlines()[-1] if result.stderr.strip() else f"git exited with {result.returncode}"
     )

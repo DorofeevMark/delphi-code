@@ -1,6 +1,7 @@
 import asyncio
 import fcntl
 import json
+import logging
 from pathlib import Path
 import shlex
 import shutil
@@ -11,6 +12,8 @@ from ..infrastructure.model_assets import download, verify_assets
 from ..infrastructure.paths import index_root
 from ..infrastructure.store import Store
 from .progress import SILENT, Progress, Stage
+
+logger = logging.getLogger(__name__)
 
 
 def diagnose(model: Path) -> dict:
@@ -39,6 +42,7 @@ def provision(model_location: str, import_from: str | None = None, progress: Pro
                 "setup_busy", "Another setup is running for this model; retry when it finishes", ExitCode.OPERATION
             ) from exc
         if destination.exists():
+            logger.info("Verifying existing model at %s", destination)
             progress.stage_started(Stage.VERIFYING_MODEL)
             try:
                 verify_assets(destination)
@@ -55,10 +59,12 @@ def provision(model_location: str, import_from: str | None = None, progress: Pro
             with tempfile.TemporaryDirectory(prefix=f".{destination.name}-", dir=destination.parent) as temporary:
                 staged = Path(temporary) / "model"
                 if source:
+                    logger.info("Importing model from %s to %s", source, destination)
                     progress.stage_started(Stage.COPYING_MODEL)
                     verify_assets(source)
                     shutil.copytree(source, staged, ignore=shutil.ignore_patterns(".*"))
                 else:
+                    logger.info("Downloading model to %s", destination)
                     progress.stage_started(Stage.DOWNLOADING_MODEL)
                     staged.mkdir()
                     download(staged)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from ..domain.errors import ExitCode, Failure
 from ..domain.manifest import Manifest
@@ -12,6 +13,8 @@ from ..infrastructure.store import Store
 from .local_model import open_model
 from .progress import SILENT, Progress, Stage
 from .project_catalog import optional_path_text
+
+logger = logging.getLogger(__name__)
 
 
 def index_local_project(
@@ -45,6 +48,7 @@ def index_checkout(
         index.read_manifest_compatible_with(model)
         progress.stage_started(Stage.READING_FILES)
         collected = collect(checkout.directory, selection, excluded=model.directory)
+        logger.info("Indexing %s: %d files selected, %d skipped", checkout.key, len(collected.files), collected.skipped)
         manifest = Manifest.for_build(checkout.project, checkout.provenance, selection, model)
         index.write_manifest(manifest)
         total = len(collected.files)
@@ -61,6 +65,7 @@ def index_checkout(
         manifest = manifest.completed()
         counts = index.counts()
         index.write_manifest(manifest)
+    logger.info("Indexed %s (incremental: %s): %s", checkout.key, incremental, counts)
     return {
         "project": optional_path_text(manifest.project),
         "key": checkout.key,
@@ -86,6 +91,7 @@ def sync(
             results.append({"source": entry.source, "ok": True, **result})
             progress.repository_finished(result)
         except Exception as exc:
+            logger.exception("Syncing %s failed", entry.source)
             failure = Failure.from_exception(exc)
             results.append({"source": entry.source, "ok": False, "error": failure.to_json()})
             progress.repository_failed(failure)
@@ -107,6 +113,7 @@ def _sync_entry(store: Store, entry: Entry, model: LocalModel, progress: Progres
     revision = origin.latest_revision(entry.ref)
     index = store.get(origin.key) if revision else None
     if revision and index and index.manifest.holds(revision.commit, entry.selection, model):
+        logger.info("%s is unchanged at %s", index.key, revision.commit)
         return {
             "unchanged": True,
             "project": None,
