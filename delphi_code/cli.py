@@ -1,5 +1,6 @@
 import argparse
 from collections.abc import Callable
+from importlib.metadata import version
 import logging
 import os
 from pathlib import Path
@@ -29,6 +30,7 @@ class Parser(argparse.ArgumentParser):
 
 def arguments() -> argparse.Namespace:
     parser = Parser(prog="delphi-code", description="Offline local code search")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {version('delphi-code')}")
     output_format_options = Parser(add_help=False)
     output_format_options.add_argument(
         "--json", action="store_true", help="Write JSON even on a terminal; JSON is the default when piped"

@@ -63,6 +63,29 @@ delphi-code setup --from /absolute/path/to/all-MiniLM-L6-v2
 
 `setup` provisions the pinned MiniLM model only. Other models can be used at runtime through `--model` or `DELPHI_CODE_MODEL` (see Models below). `index`, `search`, `status`, and `doctor` never download anything.
 
+### Upgrading
+
+```sh
+uv tool upgrade delphi-code
+delphi-code --version
+```
+
+`--version` and `doctor` show the installed version. What changed in each release is listed on [GitHub Releases](https://github.com/DorofeevMark/delphi-code/releases).
+
+An upgrade keeps the model and indexes, because they live outside the installation (see Storage). Each index records its own format version in its manifest; this is separate from the `schema_version` in JSON output, which changes only when the output format does.
+
+- Indexes from older releases are migrated in place the first time a newer release reads them, without embedding anything again.
+- When a release changes the index format in a way that cannot be migrated, its release notes say so, and commands on an old index fail with `index_incompatible` (exit code 4). Delete or move aside the index directory that the error names, and run `index` or `sync` again.
+
+### Uninstalling
+
+```sh
+uv tool uninstall delphi-code
+rm -rf ~/Library/Application\ Support/delphi-code
+```
+
+The second command removes the model, indexes, tracked-project list, and logs. On Linux the directory is `$XDG_DATA_HOME/delphi-code` or `~/.local/share/delphi-code`. Directories set through `DELPHI_CODE_MODEL`, `DELPHI_CODE_INDEX_ROOT`, `DELPHI_CODE_REGISTRY`, or `DELPHI_CODE_LOG_FILE` are not removed by this.
+
 ## Commands
 
 ```sh

@@ -24,7 +24,8 @@ def require_sqlite_extensions():
     if not hasattr(sqlite3.Connection, "enable_load_extension"):
         raise Failure(
             "sqlite_extensions_unavailable",
-            "This Python disables SQLite extension loading; provision a Python build with loadable SQLite extensions",
+            "This Python disables SQLite extension loading; reinstall with uv's own Python: "
+            "uv tool install --reinstall --managed-python delphi-code",
             ExitCode.RUNTIME_ASSETS,
         )
 
@@ -79,7 +80,11 @@ class Index:
         if manifest is None:
             raise Failure("index_missing", "No completed index exists; run index first", ExitCode.INDEX_STATE)
         if manifest.schema_version != SCHEMA_VERSION:
-            raise Failure("index_incompatible", "Unsupported index version", ExitCode.INDEX_STATE)
+            raise Failure(
+                "index_incompatible",
+                f"This version cannot read the index format; delete or move {self.directory} aside and reindex",
+                ExitCode.INDEX_STATE,
+            )
         return manifest
 
     def write_manifest(self, manifest: Manifest):

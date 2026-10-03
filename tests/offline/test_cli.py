@@ -1,4 +1,5 @@
 import fcntl
+from importlib.metadata import version
 import json
 import os
 from pathlib import Path
@@ -64,6 +65,11 @@ class OfflineCLI(unittest.TestCase):
         self.assertFalse(self.network_log.exists(), self.network_log.read_text() if self.network_log.exists() else "")
         return payload["data"] if code == 0 else payload["error"]
 
+    def test_version(self):
+        command = [sys.executable, "-m", "delphi_code", "--version"]
+        result = subprocess.run(command, env=self.env, text=True, capture_output=True, timeout=120)
+        self.assertEqual((result.returncode, result.stdout), (0, f"delphi-code {version('delphi-code')}\n"))
+
     def test_setup_import_and_reuse(self):
         destination = self.base / "provisioned-model"
         command = [sys.executable, "-m", "delphi_code", "setup", "--from", MODEL, "--model", str(destination)]
@@ -84,6 +90,7 @@ class OfflineCLI(unittest.TestCase):
         doctor = self.invoke("doctor")
         self.assertEqual(doctor["dimensions"], 384)
         self.assertEqual(doctor["self_distance"], 0)
+        self.assertEqual(doctor["version"], version("delphi-code"))
         (self.project / "auth.py").write_text(
             "def authenticate_user(password, expected_password):\n    return password == expected_password\n"
         )

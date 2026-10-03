@@ -105,3 +105,56 @@ jobs:
           name: distributions
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  verify-pypi-install:
+    needs: publish
+    runs-on: macos-14
+    steps:
+      - uses: astral-sh/setup-uv@v7
+      - name: Install from PyPI as the README says
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            uv tool install --managed-python --refresh "delphi-code==$version" && break
+            [ "$attempt" = 10 ] && exit 1
+            sleep 30
+          done
+          uv tool dir --bin >> "$GITHUB_PATH"
+      - name: Check version, setup, index and search
+        run: |
+          test "$(delphi-code --version)" = "delphi-code ${GITHUB_REF_NAME#v}"
+          delphi-code setup --json
+          mkdir "$RUNNER_TEMP/smoke-project"
+          echo 'def authenticate_user(password, expected): return password == expected' > "$RUNNER_TEMP/smoke-project/auth.py"
+          delphi-code index -p "$RUNNER_TEMP/smoke-project" --json
+          delphi-code search -p "$RUNNER_TEMP/smoke-project" 'verify password' --limit 1 --json > search.json
+          python3 -c "import json; r = json.load(open('search.json')); assert r['ok'] and r['data']['results'][0]['path'] == 'auth.py', r"
+          delphi-code doctor -p "$RUNNER_TEMP/smoke-project" --json
+
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v7
+        with:
+          name: distributions
+          path: dist
+      - name: Write release notes from commits since the previous tag
+        run: |
+          previous=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          git log --no-merges --pretty='- %s' "${previous:+$previous..}$GITHUB_REF_NAME" \
+            | grep -vE '^- (Bump version|GitButler)' > notes.md || true
+          if [ -n "$previous" ]; then
+            printf '\n**Full changelog**: %s/%s/compare/%s...%s\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$previous" "$GITHUB_REF_NAME" >> notes.md
+          fi
+          cat notes.md
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag

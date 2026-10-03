@@ -23,6 +23,7 @@ def diagnose(model_location: str, store: Store, project_name: str) -> dict:
     with vector_database(":memory:") as db:
         self_distance = db.execute("SELECT vec_distance_L2(?, ?)", (vector.tobytes(), vector.tobytes())).fetchone()[0]
     return {
+        "version": version("delphi-code"),
         "project": str(project) if project else None,
         "key": key,
         "index_directory": str(index.directory) if index else None,

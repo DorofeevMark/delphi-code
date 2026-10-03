@@ -31,6 +31,7 @@ class ModelSetupView:
 def diagnostic_fields(diagnostics: dict) -> list[tuple[str, str | None]]:
     dependencies = diagnostics.get("dependencies", {})
     return [
+        ("Version", diagnostics.get("version")),
         ("Project", project_display_name(diagnostics["key"]) if diagnostics.get("key") else None),
         ("Index", home_abbreviated(diagnostics.get("index_directory")) or "none yet"),
         ("Model", home_abbreviated(diagnostics.get("model"))),

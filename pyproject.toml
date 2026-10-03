@@ -32,6 +32,11 @@ dependencies = [
   "pathspec==0.12.1",
   "questionary==2.1.1",
   "certifi",
+  # Indirect dependencies, bounded because uv tool install ignores uv.lock
+  "torch>=2.14,<2.15",
+  "transformers>=5.17,<6",
+  "huggingface-hub>=1.32,<2",
+  "tokenizers>=0.23.2,<0.24",
 ]
 
 [project.urls]
