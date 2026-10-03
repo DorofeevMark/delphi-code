@@ -66,6 +66,20 @@ rm -rf ~/Library/Application\ Support/delphi-code
 
 On Linux the data directory is `$XDG_DATA_HOME/delphi-code` or `~/.local/share/delphi-code`.
 
+## Indexing projects
+
+```sh
+delphi-code index -p ~/src/api              # one-off; run again after changes
+delphi-code add ~/src/api ~/src/web         # track local projects
+delphi-code add github.com/octo/tools       # track a remote repo (no clone needed)
+delphi-code add                             # pick repos from your Bitbucket/GitHub account
+delphi-code sync                            # update everything tracked
+```
+
+Tracked projects live in `repos.toml` in the data directory. Remote repos are shallow-cloned to a temp dir on `sync` and skipped when unchanged; `--ref` picks a branch or tag. Only `add` and `sync` use the network.
+
+Remote credentials: `GITHUB_TOKEN`/`GH_TOKEN` (or `gh auth token`) for GitHub; `BITBUCKET_APP_PASSWORD` (an API token works) with `BITBUCKET_EMAIL` or `BITBUCKET_USERNAME` for Bitbucket. Otherwise git's stored credentials are used.
+
 ## Commands
 
 ```sh
@@ -93,40 +107,6 @@ Every command accepts `--json` and `--help`. `--path`, `--language`, and `--igno
 ### Selecting a project
 
 `-p` / `--project` takes a path, or, once a project is indexed, its key or folder name (`acme/api`, `api`). Use `./name` to force a directory. Without `-p`, `search` searches all indexes and other commands use the current directory.
-
-### Tracking projects
-
-```sh
-delphi-code add ~/src/api ~/src/web --path 'src/*'
-delphi-code sync
-delphi-code list
-delphi-code remove api
-```
-
-`add` records projects with their filter options and indexes them (`--no-sync` only records). `sync` indexes all of them; if any fail, it exits with `sync_failed` and reports each result. The list is stored in `repos.toml` in the data directory and can be edited by hand.
-
-### Bitbucket Cloud and GitHub repositories
-
-Repositories you have not cloned can be tracked too:
-
-```sh
-delphi-code add bitbucket.org/acme/billing
-delphi-code add git@bitbucket.org:acme/billing.git --ref release
-delphi-code add github.com/octo/tools
-```
-
-`sync` skips a repository whose latest commit is already indexed; otherwise it makes a temporary shallow clone, indexes it, and deletes it. Results carry a `url` linking to the indexed lines. Only `add` and `sync` use the network.
-
-Run `add` without sources in a terminal to pick from the repositories your accounts can see. Already-tracked repositories start checked; unchecking one stops tracking it.
-
-**Credentials.** Git never prompts; credentials are passed through `GIT_ASKPASS`.
-
-| | Bitbucket Cloud | GitHub |
-|---|---|---|
-| Cloning | `BITBUCKET_APP_PASSWORD` with `BITBUCKET_USERNAME` or `BITBUCKET_EMAIL`, otherwise git's stored credentials | `GITHUB_TOKEN` or `GH_TOKEN`, otherwise git's stored credentials |
-| Picker | The same variables, otherwise git's stored credentials | `GITHUB_TOKEN` or `GH_TOKEN`, otherwise `gh auth token`, otherwise git's stored credentials |
-
-A Bitbucket API token works in `BITBUCKET_APP_PASSWORD` together with `BITBUCKET_EMAIL`. It needs the `read:repository:bitbucket` scope, plus `read:workspace:bitbucket` for the picker to list workspaces (otherwise you type the workspace name, or set `BITBUCKET_WORKSPACE`).
 
 ## Output
 
@@ -168,7 +148,6 @@ Higher `score` means a closer match.
 - `.gitignore` and `.delphi-codeignore` files are respected, plus any `--ignore` patterns.
 - `.git`, `.venv`, `venv`, `node_modules`, `__pycache__`, and the model directory are skipped, as are symlinks, binary files, and files over `--max-bytes` (default 1 MiB).
 - `--path` globs and `--language` values (such as `python`, `typescript`) narrow the selection. On `index` they define the whole indexed set; on `search` they filter results.
-- Re-indexing only embeds changed files.
 
 ## Models
 
