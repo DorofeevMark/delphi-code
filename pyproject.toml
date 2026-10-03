@@ -40,8 +40,8 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/DorofeevMark/delphi-code"
-Issues = "https://github.com/DorofeevMark/delphi-code/issues"
+Repository = "https://github.com/markdorof/delphi-code"
+Issues = "https://github.com/markdorof/delphi-code/issues"
 
 [project.scripts]
 delphi-code = "delphi_code.cli:main"

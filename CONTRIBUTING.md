@@ -76,18 +76,15 @@ For a release that bundles dependencies, run `scripts/collect_notices.py` in the
 
 ## Releasing
 
-The `Publish` GitHub Actions workflow builds and validates distributions on every push to `main`, then installs the wheel on macOS, runs an online `delphi-code setup`, both test suites, and a smoke test outside the checkout.
+The `Publish` GitHub Actions workflow builds and validates distributions on every push to `main`, then installs the wheel on macOS, runs an online `delphi-code setup`, both test suites, and a smoke test outside the checkout. A second macOS job installs the wheel through `scripts/install.sh` on a runner with an empty home directory and no uv, the way a new user would, then runs `--version`, `index`, `search`, and `doctor`. A release is published only when every check passes.
 
 To release:
 
 1. Bump `version` in `pyproject.toml` and push to `main`.
 2. Once the workflow passes, push a matching tag, for example `git tag v0.1.1 && git push origin v0.1.1`. The tag must match the package version.
 
-The tag run repeats the checks and publishes to PyPI through a Trusted Publisher (project `delphi-code`, owner `DorofeevMark`, repository `delphi-code`, workflow `publish.yml`, environment `pypi`). Publishing uses GitHub OIDC; no stored PyPI token is needed. PyPI never accepts the same version twice.
+The tag run repeats the checks and publishes to PyPI through a Trusted Publisher (project `delphi-code`, owner `markdorof`, repository `delphi-code`, workflow `publish.yml`, environment `pypi`). Publishing uses GitHub OIDC; no stored PyPI token is needed. PyPI never accepts the same version twice.
 
-After publishing, the tag run:
-
-- installs the release from PyPI exactly as the README says (`uv tool install --managed-python delphi-code`) and runs `--version`, `setup`, `index`, `search`, and `doctor`, so packaging or dependency-resolution surprises show up before users report them;
-- creates a GitHub Release with the distributions attached and notes listing the commit subjects since the previous tag. Commit subjects are the changelog, so write them for users. Mention index format changes that need a rebuild in the release notes by editing the release afterwards.
+After publishing, the tag run creates a GitHub Release with the distributions and `install.sh` attached and notes listing the commit subjects since the previous tag. Commit subjects are the changelog, so write them for users. Mention index format changes that need a rebuild in the release notes by editing the release afterwards.
 
 `pyproject.toml` pins direct dependencies and bounds the risky indirect ones (torch, transformers, huggingface-hub, tokenizers), because `uv tool install` ignores `uv.lock`. Move those bounds when a new version has passed CI.

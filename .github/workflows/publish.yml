@@ -90,8 +90,50 @@ jobs:
           assert result['ok'] and result['data']['results'][0]['path'] == 'auth.py'
           PY
 
+  verify-install-script:
+    needs: build
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
+        with:
+          name: distributions
+          path: dist
+      - name: Pin the install script to the built version
+        run: |
+          wheel=$(ls dist/delphi_code-*.whl)
+          version=$(basename "$wheel" | cut -d- -f2)
+          echo "DELPHI_CODE_BUILT_VERSION=$version" >> "$GITHUB_ENV"
+          mkdir release-assets
+          sed "s/^DELPHI_CODE_RELEASE_VERSION=\"\"$/DELPHI_CODE_RELEASE_VERSION=\"$version\"/" scripts/install.sh > release-assets/install.sh
+          grep -qx "DELPHI_CODE_RELEASE_VERSION=\"$version\"" release-assets/install.sh
+      - name: Install the built wheel with the script on a machine without uv
+        run: |
+          clean_home="$RUNNER_TEMP/clean-home"
+          mkdir "$clean_home"
+          echo "DELPHI_CODE_CLEAN_HOME=$clean_home" >> "$GITHUB_ENV"
+          env -i HOME="$clean_home" PATH=/usr/bin:/bin:/usr/sbin:/sbin UV_FIND_LINKS="$GITHUB_WORKSPACE/dist" \
+            sh -s < release-assets/install.sh
+      - name: Check version, index, search and doctor
+        run: |
+          run_installed() {
+            env -i HOME="$DELPHI_CODE_CLEAN_HOME" PATH=/usr/bin:/bin "$DELPHI_CODE_CLEAN_HOME/.local/bin/delphi-code" "$@"
+          }
+          test "$(run_installed --version)" = "delphi-code $DELPHI_CODE_BUILT_VERSION"
+          mkdir "$RUNNER_TEMP/smoke-project"
+          echo 'def authenticate_user(password, expected): return password == expected' > "$RUNNER_TEMP/smoke-project/auth.py"
+          run_installed index -p "$RUNNER_TEMP/smoke-project" --json
+          run_installed search -p "$RUNNER_TEMP/smoke-project" 'verify password' --limit 1 --json > search.json
+          python3 -c "import json; r = json.load(open('search.json')); assert r['ok'] and r['data']['results'][0]['path'] == 'auth.py', r"
+          run_installed doctor -p "$RUNNER_TEMP/smoke-project" --json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: install-script
+          path: release-assets/install.sh
+          if-no-files-found: error
+
   publish:
-    needs: [build, verify]
+    needs: [build, verify, verify-install-script]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment:
@@ -106,31 +148,6 @@ jobs:
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
 
-  verify-pypi-install:
-    needs: publish
-    runs-on: macos-14
-    steps:
-      - uses: astral-sh/setup-uv@v7
-      - name: Install from PyPI as the README says
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          for attempt in 1 2 3 4 5 6 7 8 9 10; do
-            uv tool install --managed-python --refresh "delphi-code==$version" && break
-            [ "$attempt" = 10 ] && exit 1
-            sleep 30
-          done
-          uv tool dir --bin >> "$GITHUB_PATH"
-      - name: Check version, setup, index and search
-        run: |
-          test "$(delphi-code --version)" = "delphi-code ${GITHUB_REF_NAME#v}"
-          delphi-code setup --json
-          mkdir "$RUNNER_TEMP/smoke-project"
-          echo 'def authenticate_user(password, expected): return password == expected' > "$RUNNER_TEMP/smoke-project/auth.py"
-          delphi-code index -p "$RUNNER_TEMP/smoke-project" --json
-          delphi-code search -p "$RUNNER_TEMP/smoke-project" 'verify password' --limit 1 --json > search.json
-          python3 -c "import json; r = json.load(open('search.json')); assert r['ok'] and r['data']['results'][0]['path'] == 'auth.py', r"
-          delphi-code doctor -p "$RUNNER_TEMP/smoke-project" --json
-
   release:
     needs: publish
     runs-on: ubuntu-latest
@@ -144,6 +161,10 @@ jobs:
         with:
           name: distributions
           path: dist
+      - uses: actions/download-artifact@v7
+        with:
+          name: install-script
+          path: release-assets
       - name: Write release notes from commits since the previous tag
         run: |
           previous=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null || true)
@@ -157,4 +178,4 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+        run: gh release create "$GITHUB_REF_NAME" dist/* release-assets/install.sh --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag

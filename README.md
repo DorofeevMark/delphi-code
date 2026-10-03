@@ -4,9 +4,22 @@ Offline semantic code search for agents. Delphi Code is a small Python CLI that 
 
 ## Quick start
 
+Install with the script, which also installs [uv](https://docs.astral.sh/uv/) if it is missing and runs `setup`:
+
+```sh
+curl -LsSf https://github.com/markdorof/delphi-code/releases/latest/download/install.sh | sh
+```
+
+Or, with uv already installed:
+
 ```sh
 uv tool install --managed-python delphi-code
 delphi-code setup
+```
+
+Then index a project and search it:
+
+```sh
 delphi-code index -p /absolute/path/to/project
 delphi-code search 'where are user passwords checked?'
 ```
@@ -21,7 +34,9 @@ delphi-code search 'where are user passwords checked?'
 
 ## Installation
 
-From PyPI, as above, or from a checkout:
+The install script runs the same `uv tool install --managed-python delphi-code` and `delphi-code setup` as the uv option. Pass options after `sh -s --`: `--no-setup` skips the model download, `--version VERSION` picks a release. Running it again upgrades.
+
+From a checkout, with uv:
 
 ```sh
 uv tool install --managed-python /absolute/path/to/delphi-code
@@ -40,7 +55,7 @@ delphi-code setup --from /absolute/path/to/all-MiniLM-L6-v2
 uv tool upgrade delphi-code
 ```
 
-See [GitHub Releases](https://github.com/DorofeevMark/delphi-code/releases) for changes. The model and indexes are kept. If a release can't reuse an old index, commands fail with `index_incompatible`; delete the index directory the error names and run `index` or `sync` again.
+See [GitHub Releases](https://github.com/markdorof/delphi-code/releases) for changes. The model and indexes are kept. If a release can't reuse an old index, commands fail with `index_incompatible`; delete the index directory the error names and run `index` or `sync` again.
 
 ### Uninstalling
 
@@ -176,8 +191,8 @@ The CLI disables telemetry, loads models only from local files, and blocks netwo
 
 ## Development
 
-See [CONTRIBUTING.md](https://github.com/DorofeevMark/delphi-code/blob/main/CONTRIBUTING.md).
+See [CONTRIBUTING.md](https://github.com/markdorof/delphi-code/blob/main/CONTRIBUTING.md).
 
 ## License
 
-Apache-2.0. See [THIRD_PARTY_NOTICES.md](https://github.com/DorofeevMark/delphi-code/blob/main/THIRD_PARTY_NOTICES.md) for dependency and model notices.
+Apache-2.0. See [THIRD_PARTY_NOTICES.md](https://github.com/markdorof/delphi-code/blob/main/THIRD_PARTY_NOTICES.md) for dependency and model notices.
